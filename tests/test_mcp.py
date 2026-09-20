@@ -113,3 +113,24 @@ def test_generate_report_tool(server: Any, fake_edb: Path, tmp_path: Path) -> No
         format="xlsx",
     )
     assert xlsx["rows_written"] == 4
+
+
+def test_analysis_tools(server: Any, fake_edb: Path, tmp_path: Path) -> None:
+    _call(server, "open_database", path=str(fake_edb))
+    summary = _call(server, "database_summary", db="srudb")
+    assert summary["tables_with_timestamps"] >= 1
+    res = _call(server, "run_sql", db="srudb", sql="SELECT IdType, COUNT(*) AS n FROM SruDbIdMapTable GROUP BY IdType")
+    assert res["returned"] == 2 and res["schemas"] == {"srudb": "srudb"}
+    assert "error" in _call(server, "run_sql", db="srudb", sql="DROP TABLE x")
+    views = _call(server, "list_views", db="srudb")
+    assert any(v["id"] == "network_totals" for v in views["views"])
+    res = _call(server, "run_view", db="srudb", view="network_totals", limit=5)
+    assert res["columns"][0] == "application"
+    stats = _call(server, "column_statistics", db="srudb", table="Network Data Usage", columns=["TimeStamp"])
+    assert stats["columns"][0]["timestamp_kind"] == "ese"
+    assert _call(server, "detect_timestamps", db="srudb", table="Network Data Usage")["timestamp_columns"] == {
+        "TimeStamp": "ese"
+    }
+    tl = _call(server, "timeline", limit=3, output_path=str(tmp_path / "tl.csv"))
+    assert tl["count"] == 25 and tl["rows_written"] == 25 and len(tl["events"]) == 3
+    assert len(_call(server, "list_formats")["formats"]) == 8

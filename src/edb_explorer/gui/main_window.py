@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QApplication,
     QDockWidget,
     QFileDialog,
-    QLabel,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -22,8 +21,11 @@ from PySide6.QtWidgets import (
 
 from edb_explorer import __app_name__, __version__
 from edb_explorer.core import EdbDatabase, Session
+from edb_explorer.core.backends import KINDS
 from edb_explorer.core.session import ESE_EXTENSIONS
+from edb_explorer.core.sqlworkspace import SqlWorkspace
 from edb_explorer.gui.icons import app_icon, std
+from edb_explorer.gui.tasks import TaskManager, TaskPanel
 from edb_explorer.gui.theme import apply_theme, current_theme
 from edb_explorer.gui.widgets.database_tree import DatabaseTree
 from edb_explorer.gui.widgets.dialogs import (
@@ -36,14 +38,20 @@ from edb_explorer.gui.widgets.dialogs import (
 )
 from edb_explorer.gui.widgets.info_panel import InfoPanel
 from edb_explorer.gui.widgets.inspector import RecordInspector
+from edb_explorer.gui.widgets.query_tab import QueryTab, ResultsGrid, TimelineTab
+from edb_explorer.gui.widgets.stats_dialog import StatsDialog
 from edb_explorer.gui.widgets.table_tab import TableTab
+from edb_explorer.gui.widgets.welcome import WelcomePage
 from edb_explorer.gui.workers import FunctionWorker
 
 log = logging.getLogger(__name__)
 
+_ALL_EXT = " ".join(sorted({f"*{e}" for k in KINDS for e in k.extensions}))
 FILE_FILTER = (
-    "ESE databases (*.edb *.dit *.dat *.db *.mdb *.vol *.jtx);;"
-    "Exchange / generic (*.edb);;Active Directory (*.dit);;SRUM / WebCache (*.dat);;All files (*)"
+    f"All supported databases ({_ALL_EXT});;"
+    "ESE (*.edb *.dit *.dat *.jtx *.vol);;SQLite (*.db *.sqlite *.sqlite3 *.sqlitedb *.storedata);;"
+    "LevelDB (CURRENT MANIFEST-* *.ldb *.log);;Access (*.mdb *.accdb);;dBase (*.dbf);;Berkeley DB (*.db *.bdb);;"
+    "SQL dumps (*.sql);;BSON dumps (*.bson);;All files (*)"
 )
 MAX_RECENT = 12
 
@@ -60,6 +68,10 @@ class MainWindow(QMainWindow):
         self._workers: list[FunctionWorker] = []
         self._search_dialog: SearchDialog | None = None
         self.max_rows = int(self.settings.value("max_rows", 1_000_000))
+        self.tasks = TaskManager(self)
+        self.workspace = SqlWorkspace()
+        self._sql_tab: QueryTab | None = None
+        self._timeline_tab: TimelineTab | None = None
 
         self._build_central()
         self._build_docks()
@@ -80,14 +92,11 @@ class MainWindow(QMainWindow):
         self.tabs.currentChanged.connect(self._tab_changed)
         self.tabs.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tabs.customContextMenuRequested.connect(self._tabs_menu)
-        placeholder = QLabel(
-            f"<div style='color:#8a9099'><h2>{__app_name__}</h2>"
-            "<p>Open one or more ESE databases (<b>Ctrl+O</b>), or scan a folder (<b>Ctrl+Shift+O</b>).<br>"
-            "Double-click a table in the left panel to view its records.</p>"
-            "<p>Supported: ntds.dit · SRUDB.dat · Exchange .edb · WebCacheV01.dat · Windows.edb · UAL · "
-            "any JET Blue file</p></div>"
-        )
-        placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        placeholder = WelcomePage()
+        placeholder.open_files.connect(self.open_files_dialog)
+        placeholder.scan_folder.connect(self.open_folder_dialog)
+        placeholder.open_recent.connect(lambda p: self.open_files([p]))
+        placeholder.clear_recent.connect(lambda: (self.settings.setValue("recent", []), self._update_recent_menu()))
         self._placeholder = placeholder
         self.setCentralWidget(self.tabs)
         self.tabs.addTab(placeholder, "Welcome")
@@ -101,6 +110,9 @@ class MainWindow(QMainWindow):
         self.tree.export_requested.connect(lambda db_id: self._export(db_id, None))
         self.tree.export_table_requested.connect(lambda db_id, t: self._export(db_id, t))
         self.tree.count_requested.connect(self._count_all)
+        self.tree.view_activated.connect(self.run_view)
+        self.tree.stats_requested.connect(lambda db_id, t: self._show_stats_for(db_id, t))
+        self.tree.sql_requested.connect(lambda db_id: self.show_sql(db_id))
         self.dock_tree = QDockWidget("Databases", self)
         self.dock_tree.setObjectName("dock_databases")
         self.dock_tree.setWidget(self.tree)
@@ -117,8 +129,20 @@ class MainWindow(QMainWindow):
         self.dock_inspector.setObjectName("dock_inspector")
         self.dock_inspector.setWidget(self.inspector)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.dock_inspector)
+        self.task_panel = TaskPanel(self.tasks)
+        self.dock_tasks = QDockWidget("Tasks", self)
+        self.dock_tasks.setObjectName("dock_tasks")
+        self.dock_tasks.setWidget(self.task_panel)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock_tasks)
+        self.tabifyDockWidget(self.dock_info, self.dock_tasks)
+        self.dock_info.raise_()
+        self.tasks.task_added.connect(lambda _t: self.dock_tasks.raise_())
+        self.tasks.count_changed.connect(self._tasks_changed)
         self.resizeDocks([self.dock_tree, self.dock_info], [320, 340], Qt.Orientation.Horizontal)
         self.resizeDocks([self.dock_inspector], [260], Qt.Orientation.Vertical)
+
+    def _tasks_changed(self, running: int) -> None:
+        self.dock_tasks.setWindowTitle(f"Tasks ({running})" if running else "Tasks")
 
     def _build_menus(self) -> None:
         mb = self.menuBar()
@@ -149,11 +173,22 @@ class MainWindow(QMainWindow):
         view.addAction(self.dock_tree.toggleViewAction())
         view.addAction(self.dock_info.toggleViewAction())
         view.addAction(self.dock_inspector.toggleViewAction())
+        view.addAction(self.dock_tasks.toggleViewAction())
+        view.addSeparator()
+        self._act(view, "Collapse all databases", lambda: self.tree.collapse_all(), "Ctrl+Shift+-")
+        self._act(view, "Expand all databases", lambda: self.tree.expand_all(), "Ctrl+Shift+=")
         view.addSeparator()
         self.theme_action = self._act(view, "&Dark theme", self._toggle_theme, "Ctrl+Shift+D")
         self.theme_action.setCheckable(True)
         self.theme_action.setChecked(current_theme(QApplication.instance()) == "dark")  # type: ignore[arg-type]
         self._act(view, "Reset &layout", self._reset_layout)
+
+        analysis = mb.addMenu("&Analysis")
+        self._act(analysis, "&SQL console", self.show_sql, "Ctrl+Q", "SP_ComputerIcon")
+        self._act(analysis, "&Timeline", self.show_timeline, "Ctrl+L", "SP_FileDialogListView")
+        self._act(analysis, "Column &statistics for current table…", self.show_stats, "Ctrl+I")
+        self.views_menu = analysis.addMenu("Artifact &views")
+        self.views_menu.aboutToShow.connect(self._fill_views_menu)
 
         tools = mb.addMenu("&Tools")
         self._act(tools, "&Find in database(s)…", self.show_search, "Ctrl+Shift+F", "SP_FileDialogContentsView")
@@ -179,6 +214,8 @@ class MainWindow(QMainWindow):
         tb.addAction(self._act(None, "Open", self.open_files_dialog, None, "SP_DialogOpenButton"))
         tb.addAction(self._act(None, "Scan folder", self.open_folder_dialog, None, "SP_DirOpenIcon"))
         tb.addAction(self._act(None, "Search", self.show_search, None, "SP_FileDialogContentsView"))
+        tb.addAction(self._act(None, "SQL", self.show_sql, None, "SP_ComputerIcon"))
+        tb.addAction(self._act(None, "Timeline", self.show_timeline, None, "SP_FileDialogListView"))
         tb.addAction(self._act(None, "Extract", self.export_current, None, "SP_DialogSaveButton"))
         tb.addAction(self._act(None, "Report", self.show_report, None, "SP_FileDialogDetailedView"))
 
@@ -214,15 +251,33 @@ class MainWindow(QMainWindow):
         if not paths:
             return
         self.statusBar().showMessage(f"Opening {len(paths)} file(s)…")
-        QApplication.setOverrideCursor(Qt.CursorShape.BusyCursor)
+        for path in paths:
+            self._open_one(path)
+
+    def _open_one(self, path: str) -> None:
+        name = Path(path).name
+        task = self.tasks.start(f"Opening {name}", detail=path)
 
         def job(progress: Any, should_stop: Any) -> tuple[list[EdbDatabase], dict[str, str]]:
-            return self.session.open_many(paths)
+            progress("detecting format")
+            kind = self.session.detect(path)
+            progress(f"parsing {kind or 'file'} catalog")
+            return self.session.open_many([path])
 
         worker = FunctionWorker(job, parent=self)
-        worker.result.connect(self._opened)
-        worker.failed.connect(lambda m: self._opened(([], {"": m})))
-        worker.finished.connect(QApplication.restoreOverrideCursor)
+        worker.progress.connect(lambda m: task.progress(detail=str(m)))
+        worker.result.connect(
+            lambda r: (
+                self._opened(r),
+                task.finish(
+                    f"{r[0][0].info.kind_name} · {r[0][0].profile.name} · {r[0][0].info.table_count} tables"
+                    if r[0]
+                    else next(iter(r[1].values()), "failed"),
+                    failed=not r[0],
+                ),
+            )
+        )
+        worker.failed.connect(lambda m: (self._opened(([], {path: m})), task.finish(m, failed=True)))
         self._workers.append(worker)
         worker.start()
 
@@ -246,8 +301,15 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self, "Some files could not be opened", "\n\n".join(f"{p}\n{e}" for p, e in errors.items())
             )
+        self._refresh_scopes()
+
+    def _refresh_scopes(self) -> None:
         if self._search_dialog:
             self._search_dialog.refresh_scope()
+        if self._sql_tab:
+            self._sql_tab.refresh_databases()
+        if self._timeline_tab:
+            self._timeline_tab.refresh_databases()
 
     def close_database(self, db_id: str) -> None:
         for i in reversed(range(self.tabs.count())):
@@ -258,9 +320,9 @@ class MainWindow(QMainWindow):
         if self.info.db is not None and self.info.db.id == db_id:
             self.info.show_database(None)
             self.inspector.clear()
+        self.workspace.detach(db_id)
         self.session.close(db_id)
-        if self._search_dialog:
-            self._search_dialog.refresh_scope()
+        self._refresh_scopes()
         self.statusBar().showMessage(f"Closed {db_id}", 4000)
 
     def _close_current_database(self) -> None:
@@ -297,6 +359,7 @@ class MainWindow(QMainWindow):
         tab.row_selected.connect(self._row_selected)
         tab.status.connect(lambda m: self.statusBar().showMessage(m))
         tab.interpret_requested.connect(self.show_timestamp)
+        self._track_loader(tab)
         tab.extract_requested.connect(lambda scope, t=tab: self._export(t.db.id, t.table.name, t, scope))
         tab.loader.finished_ok.connect(lambda _n, d=db: self.tree.refresh_counts(d))  # type: ignore[union-attr]
         label = info.display_name if len(info.display_name) <= 32 else info.display_name[:30] + "…"
@@ -309,6 +372,16 @@ class MainWindow(QMainWindow):
             self._select_when_loaded(tab, select_row, column)
         return tab
 
+    def _track_loader(self, tab: TableTab) -> None:
+        loader = tab.loader
+        if loader is None:
+            return
+        known = tab.db.cached_count(tab.table.name)
+        task = self.tasks.start(f"Loading {tab.table.display_name}", cancel=tab.stop, detail=tab.db.path.name)
+        loader.chunk_ready.connect(lambda _i, _r: task.progress(tab.loaded, known or 0, f"{tab.loaded:,} rows"))
+        loader.finished_ok.connect(lambda n: task.finish(f"{n:,} rows"))
+        loader.failed.connect(lambda m: task.finish(m, failed=True))
+
     def _select_when_loaded(self, tab: TableTab, row: int, column: str | None) -> None:
         if tab.select_row_index(row, column):
             return
@@ -319,19 +392,23 @@ class MainWindow(QMainWindow):
         w = self.tabs.widget(index)
         if w is None or w is self._placeholder:
             return
-        if isinstance(w, TableTab):
+        if hasattr(w, "shutdown"):
             w.shutdown()
+        if w is self._sql_tab:
+            self._sql_tab = None
+        if w is self._timeline_tab:
+            self._timeline_tab = None
         self.tabs.removeTab(index)
         w.deleteLater()
         if self.tabs.count() == 0:
+            self._placeholder.set_recent(self._recent())
             self.tabs.addTab(self._placeholder, "Welcome")
-            self.tabs.tabBar().setTabButton(0, self.tabs.tabBar().ButtonPosition.RightSide, None)
             self.inspector.clear()
 
     def _tabs_menu(self, pos: Any) -> None:
         index = self.tabs.tabBar().tabAt(pos)
         menu = QMenu(self)
-        if index >= 0 and isinstance(self.tabs.widget(index), TableTab):
+        if index >= 0 and self.tabs.widget(index) is not self._placeholder:
             menu.addAction("Close tab", lambda: self._close_tab(index))
             menu.addAction("Close other tabs", lambda: self._close_other_tabs(index))
         menu.addAction("Close all tabs", lambda: self._close_other_tabs(-1))
@@ -384,6 +461,102 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ #
     # Tools
     # ------------------------------------------------------------------ #
+    def _drop_placeholder(self) -> None:
+        if self.tabs.count() == 1 and self.tabs.widget(0) is self._placeholder:
+            self.tabs.removeTab(0)
+
+    def show_sql(self, db_id: str | None = None, sql: str = "", run: bool = False) -> QueryTab:
+        if self._sql_tab is None:
+            self._drop_placeholder()
+            self._sql_tab = QueryTab(
+                self.session, self.workspace, self.tasks, self, db_id=db_id or self._current_db_id()
+            )
+            self._sql_tab.status.connect(lambda m: self.statusBar().showMessage(m))
+            self._sql_tab.extract_requested.connect(self._extract_grid)
+            self._sql_tab.row_selected.connect(self._query_row_selected)
+            self.tabs.addTab(self._sql_tab, "SQL console")
+        elif db_id:
+            self._sql_tab.refresh_databases(db_id)
+        self.tabs.setCurrentWidget(self._sql_tab)
+        if sql:
+            self._sql_tab.set_sql(sql, run)
+        return self._sql_tab
+
+    def run_view(self, db_id: str, view_id: str) -> None:
+        try:
+            db = self.session.get(db_id)
+            view = next(v for v in db.profile.views if v.id == view_id)
+        except Exception as exc:
+            QMessageBox.warning(self, "View", str(exc))
+            return
+        self._drop_placeholder()
+        tab = QueryTab(
+            self.session, self.workspace, self.tasks, self, initial_sql=view.sql, db_id=db_id, title=view.name
+        )
+        tab.status.connect(lambda m: self.statusBar().showMessage(m))
+        tab.extract_requested.connect(self._extract_grid)
+        tab.row_selected.connect(self._query_row_selected)
+        idx = self.tabs.addTab(tab, f"▶ {view.name}")
+        self.tabs.setTabToolTip(idx, f"{db.path.name}\n{view.description}")
+        self.tabs.setCurrentIndex(idx)
+        tab.run()
+
+    def show_timeline(self) -> None:
+        if self._timeline_tab is None:
+            self._drop_placeholder()
+            self._timeline_tab = TimelineTab(self.session, self.tasks, self)
+            self._timeline_tab.status.connect(lambda m: self.statusBar().showMessage(m))
+            self._timeline_tab.jump_requested.connect(lambda d, t, r: self.open_table(d, t, r))
+            self._timeline_tab.extract_requested.connect(self._extract_grid)
+            self.tabs.addTab(self._timeline_tab, "Timeline")
+        self._timeline_tab.refresh_databases()
+        self.tabs.setCurrentWidget(self._timeline_tab)
+
+    def show_stats(self) -> None:
+        tab = self._current_tab()
+        if tab is None:
+            QMessageBox.information(self, "Statistics", "Open a table first.")
+            return
+        self._show_stats_for(tab.db.id, tab.table.name)
+
+    def _show_stats_for(self, db_id: str, table: str) -> None:
+        try:
+            db = self.session.get(db_id)
+        except Exception as exc:
+            QMessageBox.warning(self, "Statistics", str(exc))
+            return
+        dlg = StatsDialog(db, table, self.tasks, self)
+        dlg.setModal(False)
+        dlg.show()
+
+    def _fill_views_menu(self) -> None:
+        self.views_menu.clear()
+        any_views = False
+        for db in self.session:
+            if not db.profile.views:
+                continue
+            any_views = True
+            sub = self.views_menu.addMenu(f"{db.path.name}  -  {db.profile.name}")
+            for v in db.profile.views:
+                sub.addAction(v.name, lambda checked=False, d=db.id, vid=v.id: self.run_view(d, vid))
+        if not any_views:
+            self.views_menu.addAction("(no views for the open databases)").setEnabled(False)
+
+    def _query_row_selected(self, db_id: str, title: str, row_index: int, row: dict[str, Any]) -> None:
+        from edb_explorer.core import ColumnInfo
+
+        cols = tuple(ColumnInfo(i + 1, k, "ANY", 0, "dynamic", None, None, False, False) for i, k in enumerate(row))
+        self.inspector.show_record(db_id, title, row_index, row, cols)
+
+    def _extract_grid(self, grid: ResultsGrid) -> None:
+        db_id = self._current_db_id()
+        try:
+            db = self.session.get(db_id) if db_id else next(iter(self.session))
+        except StopIteration:
+            QMessageBox.information(self, "Extract", "Open a database first.")
+            return
+        ExportDialog(db, None, grid.rows(), grid.selected_rows(), grid.columns(), self, "results").exec()
+
     def show_search(self) -> None:
         if self._search_dialog is None:
             self._search_dialog = SearchDialog(self.session, self)
@@ -524,6 +697,7 @@ class MainWindow(QMainWindow):
     def _update_recent_menu(self) -> None:
         self.recent_menu.clear()
         recent = self._recent()
+        self._placeholder.set_recent(recent)
         for p in recent:
             act = self.recent_menu.addAction(p)
             act.triggered.connect(lambda _c=False, path=p: self.open_files([path]))
@@ -555,7 +729,10 @@ class MainWindow(QMainWindow):
         for url in event.mimeData().urls():
             p = Path(url.toLocalFile())
             if p.is_dir():
-                paths.extend(str(x) for x in self.session.scan(p))
+                if self.session.detect(p) == "leveldb":
+                    paths.append(str(p))
+                else:
+                    paths.extend(str(x) for x in self.session.scan(p))
             elif p.is_file():
                 paths.append(str(p))
         if paths:
@@ -566,14 +743,16 @@ class MainWindow(QMainWindow):
         self.settings.setValue("window_state", self.saveState())
         for i in range(self.tabs.count()):
             w = self.tabs.widget(i)
-            if isinstance(w, TableTab):
+            if hasattr(w, "shutdown"):
                 w.shutdown()
+        self.tasks.cancel_all()
         for worker in self._workers:
             worker.cancel()
             worker.wait(2000)
         if self._search_dialog:
             self._search_dialog.close()
         self.session.close_all()
+        self.workspace.close()
         super().closeEvent(event)
 
 

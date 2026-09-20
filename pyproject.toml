@@ -4,15 +4,16 @@ build-backend = "hatchling.build"
 
 [project]
 name = "edb-explorer"
-version = "0.1.1"
-description = "Cross-platform GUI, CLI and MCP server for exploring Microsoft ESE (Extensible Storage Engine) databases - .edb, .dit, .dat - for digital forensics."
+version = "0.2.0"
+description = "Cross-platform GUI, CLI and MCP server for forensic database analysis: ESE (ntds.dit, SRUDB, Exchange), SQLite (iOS/Android/browsers/macOS/Windows apps), LevelDB, Access, DBF, Berkeley DB and SQL/BSON dumps - with SQL, timelines and reports."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
 authors = [{ name = "Keyur Aghao" }]
 keywords = [
-  "ese", "esedb", "edb", "ntds", "srum", "srudb", "exchange", "webcache",
-  "forensics", "dfir", "mcp", "model-context-protocol", "pyside6",
+  "ese", "esedb", "edb", "ntds", "srum", "srudb", "exchange", "webcache", "sqlite", "leveldb", "indexeddb",
+  "ios", "android", "chrome", "firefox", "safari", "knowledgec", "access", "dbf", "berkeley-db", "mysqldump",
+  "timeline", "forensics", "dfir", "mcp", "model-context-protocol", "pyside6",
 ]
 classifiers = [
   "Development Status :: 4 - Beta",
@@ -36,6 +37,11 @@ classifiers = [
 ]
 dependencies = [
   "dissect.esedb>=3.15",
+  "dissect.database>=1.1",
+  "access-parser>=0.0.6",
+  "dbfread>=2.0.7",
+  "bson>=0.5.10",
+  "cramjam>=2.8",
   "typer>=0.12",
   "rich>=13.7",
   "openpyxl>=3.1",
@@ -99,6 +105,12 @@ ignore = [
 "tests/*" = ["PLR", "S101", "E501"]
 "src/edb_explorer/core/report.py" = ["E501", "N806"]  # long HTML/markup template strings
 "src/edb_explorer/core/formats.py" = ["E501"]
+"src/edb_explorer/core/profiles.py" = ["E501"]  # SQL views and descriptions read better unwrapped
+"src/edb_explorer/core/profiles_apps.py" = ["E501"]
+"src/edb_explorer/core/backends/__init__.py" = ["E501"]
+"src/edb_explorer/gui/**" = ["E501"]
+"src/edb_explorer/cli.py" = ["E501"]  # typer help strings
+"src/edb_explorer/mcp/server.py" = ["E501"]  # tool docstrings are read by agents; keep them unwrapped  # long user-facing strings; code itself is formatted by ruff
 
 [tool.mypy]
 python_version = "3.10"

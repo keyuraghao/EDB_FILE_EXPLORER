@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from edb_explorer.core.database import EdbDatabase
+from edb_explorer.core.database import Database, EdbDatabase
 from edb_explorer.core.exceptions import (
     DatabaseNotFoundError,
     EdbExplorerError,
@@ -22,6 +22,7 @@ from edb_explorer.core.session import Session
 
 __all__ = [
     "ColumnInfo",
+    "Database",
     "DatabaseInfo",
     "DatabaseNotFoundError",
     "EdbDatabase",

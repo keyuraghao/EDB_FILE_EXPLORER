@@ -49,7 +49,7 @@ def test_export_scan_timestamp(fake_edb: Path, tmp_path: Path) -> None:
     r = runner.invoke(app, ["export", str(fake_edb), "-o", str(one), "-t", "SruDbIdMapTable", "-f", "jsonl"])
     assert r.exit_code == 0 and one.read_text().count("\n") == 4
     r = runner.invoke(app, ["scan", str(tmp_path), "--json"])
-    assert str(fake_edb) in json.loads(r.output)
+    assert {"path": str(fake_edb), "kind": "ese"} in json.loads(r.output)
     r = runner.invoke(app, ["timestamp", "132565120200137766"])
     assert "2021-01-30" in r.output
 
@@ -63,3 +63,22 @@ def test_report_command(fake_edb: Path, tmp_path: Path) -> None:
     assert r.exit_code == 0 and (tmp_path / "rep.txt").exists()
     r = runner.invoke(app, ["export", str(fake_edb), "-o", str(tmp_path / "x.docx"), "-f", "docx"])
     assert r.exit_code == 1
+
+
+def test_analysis_commands(fake_edb: Path, tmp_path: Path) -> None:
+    r = runner.invoke(app, ["sql", str(fake_edb), "SELECT COUNT(*) AS n FROM SruDbIdMapTable", "-f", "json"])
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.output) == [{"n": 4}]
+    r = runner.invoke(app, ["views", str(fake_edb)])
+    assert r.exit_code == 0 and "network_usage" in r.output
+    r = runner.invoke(app, ["stats", str(fake_edb), "Network Data Usage", "--json"])
+    assert r.exit_code == 0
+    cols = {c["name"]: c for c in json.loads(r.output)["columns"]}
+    assert cols["TimeStamp"]["timestamp_kind"] == "ese"
+    out = tmp_path / "tl.jsonl"
+    r = runner.invoke(app, ["timeline", str(fake_edb), "-o", str(out)])
+    assert r.exit_code == 0 and out.read_text().count("\n") == 25
+    r = runner.invoke(app, ["summary", str(fake_edb)])
+    assert r.exit_code == 0 and json.loads(r.output)["profile"].startswith("System Resource")
+    r = runner.invoke(app, ["formats"])
+    assert r.exit_code == 0 and "leveldb" in r.output

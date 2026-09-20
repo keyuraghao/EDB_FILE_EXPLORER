@@ -1,8 +1,12 @@
 # MCP server reference
 
-`edb-explorer mcp` exposes the EDB Explorer engine to any Model Context Protocol client. All
-tools are read-only with respect to database files; the two `export_*` tools and
-`generate_report` write to paths the agent names.
+`edb-explorer mcp` exposes the EDB Explorer engine to any Model Context Protocol client. Every
+supported format (ESE, SQLite, LevelDB, Access, DBF, Berkeley DB, SQL and BSON dumps) is available
+through the same tools. All tools are read-only with respect to database files; the `export_*`
+tools, `generate_report` and `timeline(output_path=…)` write to paths the agent names.
+
+A typical agent session: `open_database` → `database_summary` → `list_views` / `run_view` →
+`run_sql` for follow-up questions → `timeline` → `generate_report`.
 
 ## Transports
 
@@ -43,8 +47,15 @@ EDB_EXPLORER_ALLOWED_PATHS=/cases/001/evidence:/mnt/images edb-explorer mcp   # 
 | `export_table_to_file` | csv / xlsx / json / jsonl / txt / pdf | `db`, `table`, `output_path`, `format`, `columns`, `filter_text`, `limit` |
 | `export_database_to_directory` | every table (xlsx → one workbook) | `db`, `output_dir`, `format`, `include_system`, `tables` |
 | `generate_report` | html / pdf / docx / md / xlsx / txt / json | `output_path`, `db[]`, `format`, `title`, `case_id`, `analyst`, `notes`, `sample_rows`, `include_schema`, `count_records`, `compute_hash` |
-| `interpret_timestamp` | FILETIME / OLE / Unix / WebKit readings | `value` |
-| `list_known_profiles` | database types the tool recognises | |
+| `interpret_timestamp` | FILETIME / OLE / Unix / WebKit / Cocoa readings | `value` |
+| `list_known_profiles` | application profiles (platform, signature tables, views) | |
+| `list_formats` | file formats that can be opened | |
+| `database_summary` | detected app/platform, tables with timestamps, sampled date range, views - **call this first** | `db`, `count_records` |
+| `run_sql` | read-only SQL over any format; other databases attached as `"id"."table"` | `db`, `sql`, `limit` (≤1000), `max_value_length` |
+| `list_views` / `run_view` | profile artifact views (Chrome history, iOS messages, SRUM usage …) | `db`, `view`, `limit` |
+| `column_statistics` | nulls, distinct, min/max/mean, top values, timestamp kind + range per column | `db`, `table`, `columns`, `max_rows`, `top` |
+| `detect_timestamps` | which columns are timestamps and their encoding | `db`, `table` |
+| `timeline` | events from every timestamp column across databases, sorted | `db[]`, `tables`, `start`, `end`, `limit`, `output_path` |
 
 Every table argument accepts the real name, a case-insensitive match, or the friendly display
 name (`"Network Data Usage"` for `{973F5D5C-1D90-4944-BE8E-24B94231A174}`). `db` accepts the id,

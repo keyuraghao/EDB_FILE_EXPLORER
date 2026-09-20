@@ -33,6 +33,7 @@ _FILETIME_EPOCH = datetime(1601, 1, 1, tzinfo=UTC)
 _OLE_EPOCH = datetime(1899, 12, 30, tzinfo=UTC)
 _UNIX_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 _MAC_EPOCH = datetime(1904, 1, 1, tzinfo=UTC)
+_COCOA_EPOCH = datetime(2001, 1, 1, tzinfo=UTC)
 
 # Plausibility window used when guessing timestamp encodings.
 _MIN_PLAUSIBLE = datetime(1980, 1, 1, tzinfo=UTC)
@@ -66,6 +67,109 @@ def ole_to_datetime(value: float) -> datetime | None:
         return _OLE_EPOCH + timedelta(days=days) + timedelta(days=frac)
     except (OverflowError, ValueError):
         return None
+
+
+def cocoa_to_datetime(value: float, unit: str = "s") -> datetime | None:
+    """Apple Cocoa / Core Data time: seconds (or ns) since 2001-01-01 UTC."""
+    if value == 0:
+        return None
+    divisor = {"s": 1, "ms": 1_000, "us": 1_000_000, "ns": 1_000_000_000}[unit]
+    try:
+        return _COCOA_EPOCH + timedelta(seconds=value / divisor)
+    except (OverflowError, ValueError):
+        return None
+
+
+#: Timestamp encodings that profiles can attach to columns (``ts:<kind>`` pseudo-types).
+TIMESTAMP_KINDS = {
+    "filetime": "Windows FILETIME (100ns since 1601)",
+    "ole": "OLE Automation date (days since 1899-12-30)",
+    "ese": "ESE DateTime (OLE or FILETIME)",
+    "unix": "Unix seconds",
+    "unix_ms": "Unix milliseconds",
+    "unix_us": "Unix microseconds (PRTime)",
+    "unix_ns": "Unix nanoseconds",
+    "webkit": "WebKit/Chrome microseconds since 1601",
+    "cocoa": "Cocoa seconds since 2001",
+    "cocoa_ns": "Cocoa nanoseconds since 2001",
+    "mac_hfs": "HFS+ seconds since 1904",
+}
+
+
+def decode_timestamp_kind(value: Any, kind: str) -> datetime | None:
+    """Decode ``value`` using a known encoding; None when not decodable/implausible."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, str):
+        try:
+            value = float(value) if "." in value else int(value)
+        except ValueError:
+            return None
+    if not isinstance(value, int | float) or value == 0:
+        return None
+    dt: datetime | None
+    if kind == "filetime":
+        dt = filetime_to_datetime(int(value))
+    elif kind == "ole":
+        dt = ole_to_datetime(float(value))
+    elif kind == "ese":
+        d = decode_ese_datetime(value)
+        dt = d if isinstance(d, datetime) else None
+    elif kind == "unix":
+        dt = unix_to_datetime(value, "s")
+    elif kind == "unix_ms":
+        dt = unix_to_datetime(value, "ms")
+    elif kind in ("unix_us", "prtime"):
+        dt = unix_to_datetime(value, "us")
+    elif kind == "unix_ns":
+        dt = unix_to_datetime(value, "ns")
+    elif kind == "webkit":
+        dt = _safe_add(_FILETIME_EPOCH, microseconds=value)
+    elif kind == "cocoa":
+        # Some Apple stores switched from seconds to nanoseconds (iOS 11 sms.db); pick the plausible one.
+        dt = cocoa_to_datetime(value, "s")
+        if not _plausible(dt):
+            dt = cocoa_to_datetime(value, "ns")
+    elif kind == "cocoa_ns":
+        dt = cocoa_to_datetime(value, "ns")
+        if not _plausible(dt):
+            dt = cocoa_to_datetime(value, "s")
+    elif kind == "mac_hfs":
+        dt = _safe_add(_MAC_EPOCH, seconds=value)
+    else:
+        return None
+    return dt if _plausible(dt) else None
+
+
+#: Value ranges (roughly 1995 .. 2100) used when *guessing* an encoding from raw numbers.
+_KIND_RANGES: tuple[tuple[str, float, float], ...] = (
+    ("filetime", 1.24e17, 1.58e17),
+    ("webkit", 1.24e16, 1.58e16),
+    ("unix_ns", 8.0e17, 4.1e18),
+    ("cocoa_ns", 3.0e16, 3.1e18),
+    ("unix_us", 8.0e14, 4.1e15),
+    ("unix_ms", 8.0e11, 4.1e12),
+    ("unix", 8.0e8, 4.1e9),
+    ("cocoa", 3.0e7, 3.1e9),
+    ("ole", 34700.0, 73000.0),
+)
+
+
+def guess_timestamp_kind(values: list[Any]) -> str | None:
+    """Guess which encoding a column of numbers uses (>= 90% of samples must fall in the kind's range)."""
+    nums = [v for v in values if isinstance(v, int | float) and not isinstance(v, bool) and v]
+    if len(nums) < 3:
+        return None
+    best, best_hits = None, 0
+    for kind, lo, hi in _KIND_RANGES:
+        if kind == "ole" and not any(isinstance(v, float) for v in nums):
+            continue  # integer columns are never OLE dates
+        hits = sum(1 for v in nums if lo <= v <= hi)
+        if hits > best_hits:
+            best, best_hits = kind, hits
+    if best and best_hits >= max(3, int(0.9 * len(nums))):
+        return best
+    return None
 
 
 def unix_to_datetime(value: float, unit: str = "s") -> datetime | None:
@@ -144,11 +248,15 @@ def interpret_timestamp(value: int | float | str | bytes) -> dict[str, Any]:
         out["unix_seconds"] = iso(unix_to_datetime(raw, "s"))
         out["unix_milliseconds"] = iso(unix_to_datetime(raw, "ms"))
         out["unix_microseconds"] = iso(unix_to_datetime(raw, "us"))
+        out["unix_nanoseconds"] = iso(unix_to_datetime(raw, "ns"))
         out["webkit_chrome"] = iso(_safe_add(_FILETIME_EPOCH, microseconds=raw)) if raw > 0 else None
+        out["cocoa_seconds"] = iso(cocoa_to_datetime(raw, "s")) if raw > 0 else None
+        out["cocoa_nanoseconds"] = iso(cocoa_to_datetime(raw, "ns")) if raw > 0 else None
         out["mac_hfs"] = iso(_safe_add(_MAC_EPOCH, seconds=raw)) if 0 < raw < 2**32 else None
     else:
         out["ole_automation"] = iso(ole_to_datetime(raw))
         out["unix_seconds"] = iso(unix_to_datetime(raw, "s"))
+        out["cocoa_seconds"] = iso(cocoa_to_datetime(raw, "s")) if raw > 0 else None
     out["best_guess"] = next((k for k, v in out.items() if k != "raw" and v), None)
     return out
 
@@ -279,6 +387,9 @@ def normalize_value(
         if column_type == "DateTime":
             decoded = decode_ese_datetime(value)
             return decoded.isoformat() if isinstance(decoded, datetime) else decoded
+        if column_type and column_type.startswith("ts:"):
+            dt = decode_timestamp_kind(value, column_type[3:])
+            return dt.isoformat() if dt else value
         if isinstance(value, float) and not math.isfinite(value):
             return str(value)
         return value

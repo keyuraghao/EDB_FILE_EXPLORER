@@ -19,10 +19,13 @@ from typing import Any
 
 from edb_explorer import __app_name__, __version__
 from edb_explorer.core import EdbExplorerError, Session
-from edb_explorer.core.export import ExportFormat, export_database, export_table
-from edb_explorer.core.profiles import PROFILES
+from edb_explorer.core.analysis import build_timeline, column_statistics, database_summary, detect_timestamp_columns
+from edb_explorer.core.backends import KINDS
+from edb_explorer.core.export import ExportFormat, export_database, export_rows, export_table
+from edb_explorer.core.profiles import all_profiles
 from edb_explorer.core.report import REPORT_FORMATS, ReportOptions, generate_report
 from edb_explorer.core.search import FilterSpec, search_database
+from edb_explorer.core.sqlworkspace import SqlError, SqlWorkspace
 from edb_explorer.core.values import BytesMode, decode_bytes, hexdump, interpret_timestamp
 
 try:  # mcp >= 2.0
@@ -47,9 +50,11 @@ WRITES_FILES = ToolAnnotations(
 )
 
 INSTRUCTIONS = f"""\
-{__app_name__} {__version__} - read-only access to Microsoft ESE (Extensible Storage Engine) databases:
-Active Directory ntds.dit, SRUM SRUDB.dat, Exchange .edb, WebCacheV01.dat, Windows.edb, UAL .mdb and any other
-JET Blue database.
+{__app_name__} {__version__} - read-only access to forensic databases of many formats: Microsoft ESE
+(ntds.dit, SRUDB.dat, Exchange .edb, WebCacheV01.dat, Windows.edb, UAL), SQLite (iOS/Android apps, Chrome/Firefox/Safari,
+macOS knowledgeC, Windows ActivitiesCache ...), LevelDB (Chromium/Electron IndexedDB & Local Storage), Access, dBase,
+Berkeley DB, and mysqldump/pg_dump/mongodump exports. ~50 application profiles decode timestamps and provide
+ready-made analysis views.
 
 Typical workflow:
   1. `open_database(path)` (or `scan_directory` first to find files) -> note the returned `id`.
@@ -60,6 +65,9 @@ Typical workflow:
   5. `interpret_timestamp(value)` when you meet an unknown 64-bit number that may be a FILETIME / OLE date.
   6. `export_table_to_file` / `export_database_to_directory` extract data (csv, xlsx, json, jsonl, txt, pdf) and
      `generate_report` writes an analyst report (html, pdf, docx, md, xlsx, txt, json).
+  7. Analysis: `database_summary` (start here), `run_sql` (any format, cross-database joins), `list_views` /
+     `run_view` (Chrome history, iOS messages, SRUM network usage ...), `column_statistics`, `detect_timestamps`,
+     `timeline` (every timestamp across every table, sorted).
 
 Binary values are decoded heuristically (UTF-16 text, SIDs, GUIDs, else 0x-hex).  `DateTime` columns are
 converted to ISO-8601 UTC when they hold an OLE date or FILETIME.  Values longer than `max_value_length`
@@ -74,6 +82,7 @@ def _clamp_limit(limit: int) -> int:
 def build_server(session: Session | None = None) -> Any:
     """Create the MCP server bound to ``session`` (a fresh one if omitted)."""
     session = session if session is not None else Session()
+    workspace = SqlWorkspace()
     server: Any = _Server(name="edb-explorer", instructions=INSTRUCTIONS, version=__version__)
 
     def _err(exc: Exception) -> dict[str, Any]:
@@ -84,10 +93,12 @@ def build_server(session: Session | None = None) -> Any:
     # ------------------------------------------------------------------ #
     @server.tool(annotations=READ_ONLY)
     def open_database(path: str, id: str | None = None) -> dict[str, Any]:
-        """Open an ESE database file (.edb, .dit, .dat, .mdb ...) read-only and return its metadata.
+        """Open a database file read-only and return its metadata. Any supported format is auto-detected:
+        ESE (.edb/.dit/.dat), SQLite (phones, browsers, macOS/Windows apps), LevelDB directories (Chromium/Electron),
+        Access (.mdb/.accdb), dBase (.dbf), Berkeley DB, SQL dumps (.sql) and BSON dumps (.bson).
 
         Args:
-            path: Absolute or ~-relative path to the database file.
+            path: Absolute or ~-relative path to the database file (or LevelDB directory).
             id: Optional short identifier to refer to this database in later calls (defaults to the file stem).
         """
         try:
@@ -98,7 +109,7 @@ def build_server(session: Session | None = None) -> Any:
 
     @server.tool(annotations=READ_ONLY)
     def scan_directory(path: str, recursive: bool = True, max_files: int = 500) -> dict[str, Any]:
-        """Find ESE database files under a directory by checking the file magic (not just the extension).
+        """Find supported database files (and LevelDB directories) under a directory by file signature.
 
         Args:
             path: Directory to scan.
@@ -112,7 +123,17 @@ def build_server(session: Session | None = None) -> Any:
         return {
             "directory": str(Path(path).expanduser().resolve()),
             "count": len(found),
-            "files": [{"path": str(p), "size_bytes": p.stat().st_size, "name": p.name} for p in found],
+            "files": [
+                {
+                    "path": str(p),
+                    "name": p.name,
+                    "kind": session.detect(p),
+                    "size_bytes": sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+                    if p.is_dir()
+                    else p.stat().st_size,
+                }
+                for p in found
+            ],
         }
 
     @server.tool(annotations=READ_ONLY)
@@ -507,6 +528,181 @@ def build_server(session: Session | None = None) -> Any:
             "available_formats": list(REPORT_FORMATS),
         }
 
+    # ------------------------------------------------------------------ #
+    # Analysis
+    # ------------------------------------------------------------------ #
+    @server.tool(annotations=READ_ONLY)
+    def run_sql(
+        db: str, sql: str, limit: int = 200, max_value_length: int = DEFAULT_MAX_VALUE_LENGTH
+    ) -> dict[str, Any]:
+        """Run read-only SQL against a database of ANY format (ESE, SQLite, LevelDB, Access, DBF ...).
+
+        Tables are referenced by their real names (quote names with special characters: "{973F5D5C-...}").
+        They are materialised into an in-process SQLite on first use with the same decoding the other tools
+        apply (timestamps as ISO-8601 text, blobs as text where possible).  Other open databases are attached
+        as schemas named after their id, so cross-database joins work: "other_db"."table".
+
+        Args:
+            db: Database id, file name or path whose tables are resolved by plain name.
+            sql: A SELECT / WITH statement. {t:TableName} placeholders are also accepted.
+            limit: Maximum rows to return (1-1000).
+            max_value_length: Truncate long strings.
+        """
+        try:
+            database = session.get(db)
+            res = workspace.query_database(database, sql, _clamp_limit(limit))
+        except (EdbExplorerError, SqlError, ValueError) as exc:
+            return _err(exc)
+        out = res.to_dict(max_value_length)
+        out["database"] = database.id
+        out["schemas"] = workspace.attached()
+        return out
+
+    @server.tool(annotations=READ_ONLY)
+    def list_views(db: str) -> dict[str, Any]:
+        """List the ready-made artifact views for a database's detected application profile
+        (e.g. Chrome 'history', iOS 'messages', SRUM 'network_usage') with their SQL."""
+        try:
+            database = session.get(db)
+        except EdbExplorerError as exc:
+            return _err(exc)
+        return {"database": database.id, "profile": database.profile.name, "views": workspace.list_views(database)}
+
+    @server.tool(annotations=READ_ONLY)
+    def run_view(
+        db: str, view: str, limit: int = 200, max_value_length: int = DEFAULT_MAX_VALUE_LENGTH
+    ) -> dict[str, Any]:
+        """Run one of the profile's artifact views (see list_views) and return its rows.
+
+        Args:
+            db: Database id, file name or path.
+            view: View id or name.
+            limit: Maximum rows (1-1000).
+            max_value_length: Truncate long strings.
+        """
+        try:
+            database = session.get(db)
+            res = workspace.run_view(database, view, _clamp_limit(limit))
+        except (EdbExplorerError, SqlError) as exc:
+            return _err(exc)
+        out = res.to_dict(max_value_length)
+        out["database"] = database.id
+        out["view"] = view
+        return out
+
+    @server.tool(name="column_statistics", annotations=READ_ONLY)
+    def column_statistics_tool(
+        db: str, table: str, columns: list[str] | None = None, max_rows: int | None = None, top: int = 5
+    ) -> dict[str, Any]:
+        """Profile a table's columns: null counts, distinct values, min/max/mean, top values and the
+        detected timestamp encoding + date range for each column. Scans the table (bounded by max_rows).
+
+        Args:
+            db: Database id, file name or path.
+            table: Table name or display name.
+            columns: Restrict to these columns.
+            max_rows: Stop after this many rows (default: whole table).
+            top: Number of most common values to return per column.
+        """
+        try:
+            database = session.get(db)
+            stats, n = column_statistics(database, table, columns, max_rows, top)
+        except EdbExplorerError as exc:
+            return _err(exc)
+        return {
+            "database": database.id,
+            "table": database.resolve_table_name(table),
+            "rows_scanned": n,
+            "columns": [s.to_dict() for s in stats],
+        }
+
+    @server.tool(name="detect_timestamps", annotations=READ_ONLY)
+    def detect_timestamps_tool(db: str, table: str) -> dict[str, Any]:
+        """Which columns of a table hold timestamps and in which encoding (webkit, cocoa, unix_ms, filetime ...)."""
+        try:
+            database = session.get(db)
+            kinds = detect_timestamp_columns(database, table)
+        except EdbExplorerError as exc:
+            return _err(exc)
+        return {"database": database.id, "table": database.resolve_table_name(table), "timestamp_columns": kinds}
+
+    @server.tool(annotations=READ_ONLY)
+    def timeline(
+        db: list[str] | None = None,
+        tables: list[str] | None = None,
+        start: str | None = None,
+        end: str | None = None,
+        limit: int = 500,
+        max_rows_per_table: int = 250_000,
+        include_system: bool = False,
+        output_path: str | None = None,
+    ) -> dict[str, Any]:
+        """Build a unified timeline: one event per row and timestamp column across tables and databases,
+        sorted by time. Each event names the database/table/row/column so get_record can follow up.
+
+        Args:
+            db: Database ids to include (default: all open).
+            tables: Restrict to these tables.
+            start: ISO-8601 lower bound (inclusive).
+            end: ISO-8601 upper bound (inclusive).
+            limit: Maximum events returned inline (1-1000). With output_path the full timeline (up to 5,000,000 events) is written to the file.
+            max_rows_per_table: Rows scanned per table.
+            include_system: Include system tables.
+            output_path: Also write the full timeline to this file (csv/xlsx/json/jsonl/txt/pdf by extension).
+        """
+        from datetime import datetime, timezone
+
+        def parse(v: str | None) -> datetime | None:
+            if not v:
+                return None
+            dt = datetime.fromisoformat(v.replace("Z", "+00:00"))
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+        try:
+            dbs = [session.get(d) for d in db] if db else list(session)
+            if not dbs:
+                return {"error": "NoDatabases", "message": "Open a database first."}
+            cap = 5_000_000 if output_path else _clamp_limit(limit)
+            events, truncated = build_timeline(
+                dbs, tables, parse(start), parse(end), cap, max_rows_per_table, include_system
+            )
+        except (EdbExplorerError, ValueError, OSError) as exc:
+            return _err(exc)
+        out: dict[str, Any] = {"databases": [d.id for d in dbs], "count": len(events), "truncated": truncated}
+        if output_path:
+            n = export_rows(
+                [e.to_dict() for e in events],
+                ["timestamp", "database", "table", "row", "column", "kind", "summary"],
+                output_path,
+                Path(output_path).suffix.lstrip(".") or "csv",
+                title="Timeline",
+            )
+            out["output_path"] = str(Path(output_path).resolve())
+            out["rows_written"] = n
+            events = events[: _clamp_limit(limit)]
+        out["events"] = [e.to_dict() for e in events]
+        return out
+
+    @server.tool(name="database_summary", annotations=READ_ONLY)
+    def database_summary_tool(db: str, count_records: bool = False) -> dict[str, Any]:
+        """Analysis overview of a database: detected application/platform, tables with timestamp columns,
+        sampled date range per table, and available artifact views. A good first call after open_database."""
+        try:
+            database = session.get(db)
+            return database_summary(database, count=count_records)
+        except EdbExplorerError as exc:
+            return _err(exc)
+
+    @server.tool(annotations=READ_ONLY)
+    def list_formats() -> dict[str, Any]:
+        """List the database formats this server can open (ESE, SQLite, LevelDB, Access, DBF, Berkeley DB, SQL/BSON dumps)."""
+        return {
+            "formats": [
+                {"kind": k.id, "name": k.name, "typical_files": k.description, "extensions": list(k.extensions)}
+                for k in KINDS
+            ]
+        }
+
     @server.tool(name="interpret_timestamp", annotations=READ_ONLY)
     def interpret_timestamp_tool(value: str) -> dict[str, Any]:
         """Decode an unknown numeric timestamp every plausible way (FILETIME, OLE date, Unix s/ms/us, WebKit...).
@@ -528,10 +724,13 @@ def build_server(session: Session | None = None) -> Any:
                     "id": p.id,
                     "name": p.name,
                     "description": p.description,
+                    "platform": p.platform or None,
+                    "formats": list(p.kinds) or ["any"],
                     "signature_tables": list(p.signature_tables),
                     "file_hints": list(p.file_hints),
+                    "views": [v.id for v in p.views],
                 }
-                for p in PROFILES
+                for p in all_profiles()
             ]
         }
 

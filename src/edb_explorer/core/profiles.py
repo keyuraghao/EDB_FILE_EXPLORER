@@ -12,6 +12,20 @@ from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True, slots=True)
+class ArtifactView:
+    """A predefined analysis query for a profile.
+
+    ``sql`` is written against materialised tables using ``{t:TableName}``
+    placeholders that the SQL workspace resolves to the real table names.
+    """
+
+    id: str
+    name: str
+    description: str
+    sql: str
+
+
+@dataclass(frozen=True, slots=True)
 class Profile:
     id: str
     name: str
@@ -20,12 +34,25 @@ class Profile:
     table_names: dict[str, str] = field(default_factory=dict)
     table_descriptions: dict[str, str] = field(default_factory=dict)
     file_hints: tuple[str, ...] = ()
+    kinds: tuple[str, ...] = ()  # backend kinds this profile applies to (empty = any)
+    platform: str = ""  # windows | macos | ios | android | linux | browser | server | cross
+    #: {"*" | table: {column: timestamp kind}} - kinds: webkit, cocoa, cocoa_ns, unix, unix_ms, unix_us, unix_ns,
+    #: filetime, ole, prtime(=unix_us)
+    column_hints: dict[str, dict[str, str]] = field(default_factory=dict)
+    views: tuple[ArtifactView, ...] = ()
+    #: match when *any* of these signature tables is present (instead of scoring all)
+    any_of: bool = False
 
     def display_name(self, table: str) -> str:
         return self.table_names.get(table, table)
 
     def describe(self, table: str) -> str | None:
         return self.table_descriptions.get(table)
+
+    def timestamp_hints(self, table: str) -> dict[str, str]:
+        hints = dict(self.column_hints.get("*", {}))
+        hints.update(self.column_hints.get(table, {}))
+        return hints
 
 
 _SRUM_TABLES = {
@@ -73,6 +100,8 @@ PROFILES: tuple[Profile, ...] = (
             "sd_table": "Security descriptors referenced by nTSecurityDescriptor.",
         },
         file_hints=("ntds.dit",),
+        kinds=("ese",),
+        platform="windows",
     ),
     Profile(
         id="srum",
@@ -82,6 +111,43 @@ PROFILES: tuple[Profile, ...] = (
         table_names=_SRUM_TABLES,
         table_descriptions=_SRUM_DESCRIPTIONS,
         file_hints=("srudb.dat",),
+        kinds=("ese",),
+        platform="windows",
+        views=(
+            ArtifactView(
+                "network_usage",
+                "Network usage by application",
+                "Bytes sent/received per hour resolved to application path and user SID",
+                "SELECT n.TimeStamp, a.IdBlob AS application, u.IdBlob AS user_sid, n.BytesSent, n.BytesRecvd, n.InterfaceLuid, n.L2ProfileId "
+                "FROM {t:{973F5D5C-1D90-4944-BE8E-24B94231A174}} n LEFT JOIN {t:SruDbIdMapTable} a ON a.IdIndex = n.AppId "
+                "LEFT JOIN {t:SruDbIdMapTable} u ON u.IdIndex = n.UserId ORDER BY n.TimeStamp DESC",
+            ),
+            ArtifactView(
+                "network_totals",
+                "Network totals per application",
+                "Total bytes sent/received per application across the whole database",
+                "SELECT a.IdBlob AS application, SUM(n.BytesSent) AS bytes_sent, SUM(n.BytesRecvd) AS bytes_received, COUNT(*) AS samples, "
+                "MIN(n.TimeStamp) AS first, MAX(n.TimeStamp) AS last FROM {t:{973F5D5C-1D90-4944-BE8E-24B94231A174}} n "
+                "LEFT JOIN {t:SruDbIdMapTable} a ON a.IdIndex = n.AppId GROUP BY a.IdBlob ORDER BY bytes_sent + bytes_received DESC",
+            ),
+            ArtifactView(
+                "app_resource_usage",
+                "Application resource usage",
+                "CPU time, I/O and foreground time per application and user",
+                "SELECT r.TimeStamp, a.IdBlob AS application, u.IdBlob AS user_sid, r.ForegroundCycleTime, r.BackgroundCycleTime, "
+                "r.ForegroundBytesRead, r.ForegroundBytesWritten, r.FaceTime FROM {t:{D10CA2FE-6FCF-4F6D-848E-B2E99266FA89}} r "
+                "LEFT JOIN {t:SruDbIdMapTable} a ON a.IdIndex = r.AppId LEFT JOIN {t:SruDbIdMapTable} u ON u.IdIndex = r.UserId "
+                "ORDER BY r.TimeStamp DESC",
+            ),
+            ArtifactView(
+                "connectivity",
+                "Network connectivity",
+                "Connect / disconnect events per interface",
+                "SELECT c.TimeStamp, c.ConnectStartTime, c.ConnectedTime, c.InterfaceLuid, c.L2ProfileId, c.L2ProfileFlags, a.IdBlob AS application "
+                "FROM {t:{DD6636C4-8929-4683-974E-22C046A43763}} c LEFT JOIN {t:SruDbIdMapTable} a ON a.IdIndex = c.AppId ORDER BY c.TimeStamp DESC",
+            ),
+        ),
+        column_hints={"{DD6636C4-8929-4683-974E-22C046A43763}": {"ConnectStartTime": "filetime"}},
     ),
     Profile(
         id="exchange",
@@ -96,6 +162,8 @@ PROFILES: tuple[Profile, ...] = (
             "Globals": "Globals (store-wide properties)",
         },
         file_hints=("mailbox database", ".edb"),
+        kinds=("ese",),
+        platform="server",
     ),
     Profile(
         id="webcache",
@@ -112,6 +180,27 @@ PROFILES: tuple[Profile, ...] = (
             "(History, Content, Cookies, iedownload...).",
         },
         file_hints=("webcachev01.dat", "webcachev24.dat"),
+        kinds=("ese",),
+        platform="windows",
+        views=(
+            ArtifactView(
+                "containers",
+                "Container index",
+                "What each Container_N table holds",
+                "SELECT ContainerId, Name, Directory, PartitionId, LastScavengeTime, LastAccessTime FROM {t:Containers}",
+            ),
+        ),
+        column_hints={
+            "*": {
+                "AccessedTime": "filetime",
+                "ModifiedTime": "filetime",
+                "ExpiryTime": "filetime",
+                "CreationTime": "filetime",
+                "LastScavengeTime": "filetime",
+                "LastAccessTime": "filetime",
+                "SyncTime": "filetime",
+            }
+        },
     ),
     Profile(
         id="windows_search",
@@ -124,6 +213,8 @@ PROFILES: tuple[Profile, ...] = (
             "SystemIndex_GthrPth": "SystemIndex_GthrPth (path hierarchy)",
         },
         file_hints=("windows.edb",),
+        kinds=("ese",),
+        platform="windows",
     ),
     Profile(
         id="ual",
@@ -139,6 +230,17 @@ PROFILES: tuple[Profile, ...] = (
             "CHAINED_DATABASES": "CHAINED_DATABASES",
         },
         file_hints=("current.mdb", "systemidentity.mdb"),
+        kinds=("ese",),
+        platform="server",
+        views=(
+            ArtifactView(
+                "clients",
+                "Client access",
+                "Which client/user accessed which role, with first/last seen",
+                "SELECT c.InsertDate, c.LastAccess, c.Address, c.AuthenticatedUserName, c.ClientName, r.RoleName, c.TotalAccesses "
+                "FROM {t:CLIENTS} c LEFT JOIN {t:ROLE_ACCESS} r ON r.RoleGuid = c.RoleGuid ORDER BY c.LastAccess DESC",
+            ),
+        ),
     ),
     Profile(
         id="windows_update",
@@ -147,6 +249,8 @@ PROFILES: tuple[Profile, ...] = (
         signature_tables=("tbFiles", "tbUpdates"),
         table_names={"tbHistory": "tbHistory (install history)", "tbUpdates": "tbUpdates"},
         file_hints=("datastore.edb",),
+        kinds=("ese",),
+        platform="windows",
     ),
     Profile(
         id="windows_mail",
@@ -183,28 +287,56 @@ SYSTEM_TABLES = frozenset(
 )
 
 
-def detect_profile(table_names: list[str] | set[str], file_name: str | None = None) -> Profile:
-    """Pick the best profile for a database based on its table names (and file name as a tiebreak)."""
+def detect_profile(table_names: list[str] | set[str], file_name: str | None = None, kind: str | None = None) -> Profile:
+    """Pick the best profile for a database based on its table names, file name and backend kind."""
     names = set(table_names)
+    lowered_names = {n.lower() for n in names}
     lowered = (file_name or "").lower()
     best: Profile | None = None
     best_score = 0
-    for profile in PROFILES:
-        if not profile.signature_tables:
+    for profile in all_profiles():
+        if kind and profile.kinds and kind not in profile.kinds:
             continue
-        matched = sum(1 for t in profile.signature_tables if t in names)
+        if not profile.signature_tables:
+            # kind-only profile (e.g. any BSON dump): weakest possible match
+            if kind and profile.kinds and best_score < 1:
+                best, best_score = profile, 1
+            continue
+        matched = sum(1 for t in profile.signature_tables if t in names or t.lower() in lowered_names)
         if matched == 0:
             continue
-        score = matched * 10 + (5 if any(h in lowered for h in profile.file_hints) else 0)
-        if matched == len(profile.signature_tables):
+        file_match = any(h in lowered for h in profile.file_hints)
+        score = matched * 10 + (25 if file_match else 0)
+        if matched == len(profile.signature_tables) or (profile.any_of and file_match):
             score += 100
         if score > best_score:
             best, best_score = profile, score
-    return best or GENERIC
+    if best is None:
+        return generic_for(kind)
+    return best
+
+
+def generic_for(kind: str | None) -> Profile:
+    from edb_explorer.core.backends import KIND_NAMES
+
+    if not kind or kind == "ese":
+        return GENERIC
+    return Profile(
+        id=f"generic-{kind}",
+        name=f"Generic {KIND_NAMES.get(kind, kind)} database",
+        description="No known application profile matched this database.",
+        signature_tables=(),
+    )
+
+
+def all_profiles() -> tuple[Profile, ...]:
+    from edb_explorer.core.profiles_apps import APP_PROFILES
+
+    return PROFILES + APP_PROFILES
 
 
 def profile_by_id(profile_id: str) -> Profile:
-    for p in PROFILES:
+    for p in all_profiles():
         if p.id == profile_id:
             return p
     return GENERIC

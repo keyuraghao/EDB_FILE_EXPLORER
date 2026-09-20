@@ -6,6 +6,35 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-20
+
+### Added
+- **New formats**: SQLite 3 (WAL-aware, pure-Python parser - no locks on evidence), LevelDB directories
+  (Chromium / Electron Local Storage, Session Storage, IndexedDB - own reader incl. deleted and superseded
+  records), Microsoft Access `.mdb`/`.accdb`, dBase/FoxPro `.dbf` (soft-deleted records exposed), Berkeley DB,
+  SQL dumps (`mysqldump`, `pg_dump` incl. `COPY`, `sqlite .dump`) and `mongodump` `.bson`. Detection is by
+  file signature; `scan` finds all of them.
+- **52 application profiles** (mobile, desktop, browser, server) with per-column timestamp decoding
+  (WebKit, Cocoa, Unix s/ms/µs/ns, FILETIME, OLE) and **artifact views** - ready-made SQL such as Chrome
+  browsing history, iOS messages with handles, Android call log, SRUM network usage by application,
+  knowledgeC app usage, macOS quarantine downloads.
+- **SQL console** over any format (tables materialised into SQLite with decoded values; every open database
+  attached as a schema for cross-database joins), in the GUI (`Ctrl+Q`), CLI (`sql`, `views`) and MCP
+  (`run_sql`, `list_views`, `run_view`).
+- **Timeline** across databases from every detected timestamp column (GUI `Ctrl+L`, CLI `timeline`, MCP
+  `timeline`), with date filtering, jump-to-record and extraction.
+- **Column statistics** with automatic timestamp-encoding detection (GUI `Ctrl+I`, CLI `stats`, MCP
+  `column_statistics`, `detect_timestamps`) and a `database_summary` overview.
+- GUI: welcome screen with **Open files / Open recent / Scan folder** cards and a recent-files list; a
+  **Tasks** panel with a progress bar per file being opened / table being loaded so other files stay usable;
+  **collapse / expand all** buttons in the database tree; *Analysis views* node per database; results grids
+  with filtering, copy and multi-format extraction.
+- CLI `formats`, `summary`; MCP `list_formats`; `docs/formats.md` generated from the profile registry.
+
+### Changed
+- `EdbDatabase` is now an alias of the format-agnostic `Database`; `DatabaseInfo` gained `kind`, `kind_name`,
+  `encoding` and `sidecars`.
+
 ## [0.1.1] - 2026-09-20
 
 ### Added

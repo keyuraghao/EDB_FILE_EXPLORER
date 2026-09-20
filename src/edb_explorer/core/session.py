@@ -9,15 +9,33 @@ import threading
 from collections.abc import Iterator, Sequence
 from pathlib import Path
 
-from edb_explorer.core.database import EdbDatabase, is_ese_file
+from edb_explorer.core.backends import detect_kind
+from edb_explorer.core.database import EdbDatabase
 from edb_explorer.core.exceptions import DatabaseNotFoundError, PathNotAllowedError
 from edb_explorer.core.models import DatabaseInfo
 
 log = logging.getLogger(__name__)
 
-# Extensions commonly used for ESE databases.  Directory scans also check the
-# magic number so unusual names are still found.
+# Extensions commonly used by supported databases.  Directory scans check file
+# signatures so unusual names are still found.
 ESE_EXTENSIONS = frozenset({".edb", ".dit", ".dat", ".db", ".mdb", ".vol", ".jtx"})
+ALL_EXTENSIONS = ESE_EXTENSIONS | frozenset(
+    {
+        ".sqlite",
+        ".sqlite3",
+        ".sqlitedb",
+        ".storedata",
+        ".db3",
+        ".s3db",
+        ".accdb",
+        ".dbf",
+        ".bdb",
+        ".sql",
+        ".bson",
+        ".ldb",
+    }
+)
+_SKIP_SUFFIXES = (".log", ".chk", ".jrs", "-wal", "-shm", "-journal", ".dbt", ".fpt")
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
@@ -60,9 +78,15 @@ class Session:
         return candidate
 
     # ------------------------------------------------------------------ #
-    def open(self, path: str | os.PathLike[str], db_id: str | None = None) -> EdbDatabase:
-        """Open a database, or return the existing handle if that file is already open."""
+    def open(self, path: str | os.PathLike[str], db_id: str | None = None, kind: str | None = None) -> EdbDatabase:
+        """Open a database (any supported format), or return the existing handle if it is already open.
+
+        A file inside a LevelDB directory (``CURRENT``, ``*.ldb``, ``*.log``) opens the directory.
+        """
         resolved = Path(path).expanduser().resolve()
+        if resolved.is_file() and (kind == "leveldb" or (kind is None and detect_kind(resolved) == "leveldb")):
+            resolved = resolved.parent
+            kind = "leveldb"
         self._check_allowed(resolved)
         with self._lock:
             for db in self._dbs.values():
@@ -70,7 +94,7 @@ class Session:
                     return db
             if db_id and db_id in self._dbs:
                 raise DatabaseNotFoundError(f"Identifier {db_id!r} is already in use")
-            db = EdbDatabase(resolved, db_id or self._unique_id(resolved))
+            db = EdbDatabase(resolved, db_id or self._unique_id(resolved), kind)
             self._dbs[db.id] = db
             log.info("Opened %s as %s (%s, %d tables)", resolved, db.id, db.profile.name, db.info.table_count)
             return db
@@ -142,25 +166,47 @@ class Session:
         recursive: bool = True,
         check_magic: bool = True,
         max_files: int = 10_000,
+        kinds: set[str] | None = None,
     ) -> list[Path]:
-        """Find ESE database files under a directory."""
+        """Find supported database files (and LevelDB directories) under a directory.
+
+        Returns paths sorted by name; LevelDB stores are returned as their directory.
+        """
         root = Path(directory).expanduser().resolve()
         self._check_allowed(root)
         if not root.is_dir():
             raise FileNotFoundError(f"Not a directory: {root}")
         found: list[Path] = []
+        seen_dirs: set[Path] = set()
         walker = root.rglob("*") if recursive else root.glob("*")
         for entry in walker:
             if len(found) >= max_files:
                 break
             try:
+                if entry.is_dir():
+                    continue
                 if not entry.is_file():
                     continue
+                name = entry.name.lower()
+                if name.endswith(_SKIP_SUFFIXES) and not (name.endswith(".log") and entry.parent not in seen_dirs):
+                    continue
+                if entry.parent in seen_dirs:
+                    continue
                 if check_magic:
-                    if is_ese_file(entry):
-                        found.append(entry)
-                elif entry.suffix.lower() in ESE_EXTENSIONS:
+                    kind = detect_kind(entry)
+                    if kind is None or (kinds and kind not in kinds):
+                        continue
+                    if kind == "leveldb":
+                        seen_dirs.add(entry.parent)
+                        found.append(entry.parent)
+                        continue
+                    found.append(entry)
+                elif entry.suffix.lower() in ALL_EXTENSIONS:
                     found.append(entry)
             except OSError:
                 continue
-        return sorted(found)
+        return sorted(set(found))
+
+    def detect(self, path: str | os.PathLike[str]) -> str | None:
+        """Backend kind for ``path`` or None."""
+        return detect_kind(path)

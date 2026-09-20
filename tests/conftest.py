@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from edb_explorer.core import Session
-from edb_explorer.core.database import ESE_MAGIC
+from edb_explorer.core.backends.ese import ESE_MAGIC
 
 # --------------------------------------------------------------------------- #
 # Fake dissect objects
@@ -188,7 +188,14 @@ SRUM_ROWS = [
     {"IdType": 0, "IdIndex": 4, "IdBlob": "chrome.exe".encode("utf-16-le")},
 ]
 NET_ROWS = [
-    {"AutoIncId": i, "TimeStamp": ole_bits(44220.0 + i / 24), "AppId": 10 + i, "UserId": 4, "BytesSent": 100 * i}
+    {
+        "AutoIncId": i,
+        "TimeStamp": ole_bits(44220.0 + i / 24),
+        "AppId": 10 + i,
+        "UserId": 4,
+        "BytesSent": 100 * i,
+        "BytesRecvd": 7 * i,
+    }
     for i in range(1, 26)
 ]
 
@@ -234,6 +241,7 @@ class FakeEseDB:
                     FakeColumn(3, "AppId", "Long"),
                     FakeColumn(4, "UserId", "Long"),
                     FakeColumn(5, "BytesSent", "LongLong", size=8),
+                    FakeColumn(6, "BytesRecvd", "LongLong", size=8),
                 ],
                 NET_ROWS,
                 [FakeIndex("TimeStamp", True, True)],
@@ -251,7 +259,7 @@ class FakeEseDB:
 
 @pytest.fixture
 def fake_backend(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("edb_explorer.core.database.EseDB", FakeEseDB)
+    monkeypatch.setattr("edb_explorer.core.backends.ese.EseDB", FakeEseDB)
 
 
 @pytest.fixture

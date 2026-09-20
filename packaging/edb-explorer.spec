@@ -31,6 +31,11 @@ hiddenimports = (
     collect_submodules("dissect.esedb")
     + collect_submodules("dissect.cstruct")
     + collect_submodules("dissect.util")
+    + collect_submodules("dissect.database")
+    + collect_submodules("access_parser")
+    + collect_submodules("dbfread")
+    + collect_submodules("bson")
+    + ["cramjam", "construct", "tabulate"]
     + collect_submodules("edb_explorer")
     + collect_submodules("mcp")
     + collect_submodules("mcp_types")

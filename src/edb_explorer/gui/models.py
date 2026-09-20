@@ -18,6 +18,7 @@ ROW_INDEX_ROLE = Qt.ItemDataRole.UserRole + 2
 KIND_ROLE = Qt.ItemDataRole.UserRole + 10
 DB_ID_ROLE = Qt.ItemDataRole.UserRole + 11
 TABLE_ROLE = Qt.ItemDataRole.UserRole + 12
+VIEW_ROLE = Qt.ItemDataRole.UserRole + 13
 
 _NUMERIC_TYPES = frozenset(
     {
@@ -233,7 +234,9 @@ class DatabaseTreeModel(QStandardItemModel):
     def add_database(self, db: EdbDatabase, icon: Any = None) -> QStandardItem:
         item = QStandardItem(db.path.name)
         item.setEditable(False)
-        item.setToolTip(f"{db.path}\n{db.profile.name}\n{db.info.table_count} tables · {db.info.size_bytes:,} bytes")
+        item.setToolTip(
+            f"{db.path}\n{db.info.kind_name}\n{db.profile.name}\n{db.info.table_count} tables · {db.info.size_bytes:,} bytes"
+        )
         item.setData("db", KIND_ROLE)
         item.setData(db.id, DB_ID_ROLE)
         if icon is not None:
@@ -241,10 +244,27 @@ class DatabaseTreeModel(QStandardItemModel):
         sub = QStandardItem("")
         sub.setEditable(False)
         cols = QStandardItem(str(db.info.table_count))
-        cols.setToolTip(f"{db.info.table_count} tables")
         cols.setEditable(False)
+        cols.setToolTip(f"{db.info.table_count} tables")
         cols.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.appendRow([item, sub, cols])
+        if db.profile.views:
+            analysis = QStandardItem("Analysis views")
+            analysis.setEditable(False)
+            analysis.setData("views", KIND_ROLE)
+            analysis.setData(db.id, DB_ID_ROLE)
+            analysis.setToolTip("Ready-made queries for this database type - double-click to run")
+            analysis.setForeground(QColor("#6ea8fe"))
+            for v in db.profile.views:
+                vi = QStandardItem(v.name)
+                vi.setEditable(False)
+                vi.setData("view", KIND_ROLE)
+                vi.setData(db.id, DB_ID_ROLE)
+                vi.setData(v.id, VIEW_ROLE)
+                vi.setToolTip(f"{v.description}\n\n{v.sql}")
+                vi.setForeground(QColor("#6ea8fe"))
+                analysis.appendRow([vi, QStandardItem(""), QStandardItem("")])
+            item.appendRow([analysis, QStandardItem(""), QStandardItem("")])
         for t in db.tables():
             item.appendRow(self._table_row(db.id, t))
         self._db_items[db.id] = item
@@ -281,6 +301,8 @@ class DatabaseTreeModel(QStandardItemModel):
             return
         for r in range(item.rowCount()):
             name_item = item.child(r, 0)
+            if name_item.data(KIND_ROLE) != "table":
+                continue
             count = db.cached_count(name_item.data(TABLE_ROLE))
             if count is not None:
                 item.child(r, 1).setText(f"{count:,}")

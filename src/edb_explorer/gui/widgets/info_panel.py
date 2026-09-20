@@ -47,18 +47,25 @@ class InfoPanel(QWidget):
             return
         info = db.info
         self.title.setText(db.path.name)
-        self.subtitle.setText(f"{db.profile.name}\n{db.profile.description}")
+        self.subtitle.setText(f"{info.kind_name}  ·  {db.profile.name}\n{db.profile.description}")
         general = QTreeWidgetItem(["General"])
         for k, v in (
             ("Identifier", info.id),
+            ("Format", info.kind_name),
             ("Path", info.path),
             ("Size", f"{info.size_bytes:,} bytes"),
             ("Tables", str(info.table_count)),
             ("Page size", f"{info.page_size:,} bytes"),
-            ("Format", f"0x{info.format_version:X} rev {info.format_revision}"),
-            ("Created by format", f"0x{info.created_version:X} rev {info.created_revision}"),
-            ("Shutdown state", info.state),
+            ("Format version", f"0x{info.format_version:X} rev {info.format_revision}" if info.format_version else "-"),
+            (
+                "Created by format",
+                f"0x{info.created_version:X} rev {info.created_revision}" if info.created_version else "-",
+            ),
+            ("State", info.state or "-"),
             ("Windows version", info.windows_version or "-"),
+            ("Text encoding", info.encoding or "-"),
+            ("Sidecar files", ", ".join(info.sidecars) if info.sidecars else "-"),
+            ("Platform", db.profile.platform or "-"),
             ("SHA-256", info.sha256 or "(not computed)"),
         ):
             general.addChild(QTreeWidgetItem([k, v]))

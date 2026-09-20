@@ -108,11 +108,15 @@ class DatabaseInfo:
     profile_id: str
     profile_name: str
     table_count: int
+    kind: str = "ese"
+    kind_name: str = "Microsoft ESE / JET Blue"
     created: datetime | None = None
     last_attach: datetime | None = None
     last_detach: datetime | None = None
     windows_version: str | None = None
+    encoding: str | None = None
     sha256: str | None = None
+    sidecars: list[str] = field(default_factory=list)
     header: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self, include_header: bool = False) -> dict[str, Any]:

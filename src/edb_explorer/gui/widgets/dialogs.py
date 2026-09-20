@@ -219,11 +219,17 @@ class ExportDialog(QDialog):
         self.r_db = QRadioButton(f"Whole database “{db.path.name}” - every table (xlsx: one workbook, sheet per table)")
         for r in (self.r_selected, self.r_table_view, self.r_table_all, self.r_db):
             sl.addWidget(r)
-        self.r_selected.setEnabled(bool(table and n_sel))
-        self.r_table_view.setEnabled(bool(table and displayed_rows is not None))
+        results_mode = default_scope == "results"
+        if results_mode:
+            self.r_table_view.setText(f"Query / timeline results as displayed - {n_disp} row(s), {n_cols} column(s)")
+            self.r_table_all.hide()
+        self.r_selected.setEnabled(bool((table or results_mode) and n_sel))
+        self.r_table_view.setEnabled(bool((table or results_mode) and displayed_rows is not None))
         self.r_table_all.setEnabled(bool(table))
         if default_scope == "selection" and n_sel:
             self.r_selected.setChecked(True)
+        elif results_mode:
+            (self.r_selected if n_sel else self.r_table_view).setChecked(True)
         elif table:
             self.r_table_all.setChecked(True)
         else:
@@ -284,7 +290,7 @@ class ExportDialog(QDialog):
             from edb_explorer.core.export import safe_filename
 
             suffix = "_selection" if self.r_selected.isChecked() else "_view" if self.r_table_view.isChecked() else ""
-            self.dest.setText(str(base / f"{self.db.path.stem}_{safe_filename(self.table or 'table')}{suffix}.{fmt}"))
+            self.dest.setText(str(base / f"{self.db.path.stem}_{safe_filename(self.table or 'results')}{suffix}.{fmt}"))
 
     def _browse(self) -> None:
         if self._is_db():
@@ -309,7 +315,7 @@ class ExportDialog(QDialog):
         cols = self.visible_columns or []
         include_system = self.include_system.isChecked()
         types = db.column_types(table) if table else {}
-        title = f"{db.path.name} - {table}" if table else db.path.name
+        title = f"{db.path.name} - {table or 'results'}"
         QSettings().setValue("export_dir", str(Path(dest).parent))
 
         if self._is_db():
