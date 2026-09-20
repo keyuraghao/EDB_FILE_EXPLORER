@@ -8,7 +8,9 @@
 #endif
 
 [Setup]
-AppId={{7C1B4A0E-2F0D-4C7A-9E7B-EDB0EXPL0RER}
+; All relative paths below (and /DSource) are resolved from the repository root, not from packaging\.
+SourceDir=..
+AppId={{7C1B4A0E-2F0D-4C7A-9E7B-3D5A1F6E8B42}
 AppName=EDB Explorer
 AppVersion={#Version}
 AppVerName=EDB Explorer {#Version}
