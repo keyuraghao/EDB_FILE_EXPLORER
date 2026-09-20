@@ -21,11 +21,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/mailbox.png" width="900" alt="EDB Explorer - Exchange mailbox viewer">
-</p>
-<p align="center">
-  <img src="docs/screenshots/analysis-view.png" width="440" alt="SRUM network usage view">
-  <img src="docs/screenshots/timeline.png" width="440" alt="Cross-database timeline">
+  <img src="docs/screenshots/main-dark.png" width="900" alt="EDB Explorer - SRUM and NTDS databases open, record inspector with hex view">
 </p>
 
 ---
@@ -58,8 +54,17 @@ Everything is **strictly read-only** - the tool never writes to an evidence file
 - Open many databases at once (`Ctrl+O`), drag-and-drop files or folders, welcome screen with **Open / Recent / Scan**
   buttons, a **Tasks** panel showing a progress bar for every file being opened or table being loaded while you keep
   working, collapse / expand all databases with one click.
+
+<p align="center">
+  <img src="docs/screenshots/welcome.png" width="900" alt="Welcome screen - Open files / Open recent / Scan folder">
+</p>
+
 - **Light and dark themes** (View ▸ Theme: Light / Dark / Follow system, or the sun / moon button at the right of the
   toolbar, `Ctrl+Shift+D`); every toolbar action has its own icon.
+
+<p align="center">
+  <img src="docs/screenshots/main-light.png" width="900" alt="The same session in the light theme">
+</p>
 
 **Application knowledge** (see [docs/formats.md](docs/formats.md))
 - 52 profiles: NTDS, SRUM, Exchange, WebCache, Windows Search, UAL, Windows Timeline, Notifications, Chrome/Edge
@@ -78,6 +83,10 @@ Everything is **strictly read-only** - the tool never writes to an evidence file
 - Export selected messages, a folder or a whole mailbox as **EML** (attachments embedded), **HTML**, **TXT** or
   **JSON**; save attachments; export the message list to xlsx/csv/pdf.
 
+<p align="center">
+  <img src="docs/screenshots/mailbox.png" width="900" alt="Exchange mailbox viewer - folders, message list and preview (contents blurred)">
+</p>
+
 **AI agents inside the app** (`Ctrl+Shift+A`)
 - Embedded terminal running **Claude Code, OpenAI Codex CLI, Gemini CLI, GitHub Copilot CLI, Aider**, a shell
   or any command. *Configure MCP* registers this tool's MCP server with the agent (scoped to the folders of the
@@ -87,11 +96,27 @@ Everything is **strictly read-only** - the tool never writes to an evidence file
 **Analysis**
 - **SQL console** over *any* format: tables are materialised into SQLite with decoded values; every open database is
   attached as a schema so you can join a phone's messages against a laptop's browser history.
+
+<p align="center">
+  <img src="docs/screenshots/analysis-view.png" width="900" alt="Artifact view - SRUM network totals per application, run in the SQL console">
+</p>
+
 - **Timeline**: every timestamp column of every table (detected by profile hints or value heuristics) becomes an
   event; filter by date range, double-click to jump to the record, extract to xlsx/csv/pdf.
+
+<p align="center">
+  <img src="docs/screenshots/timeline.png" width="900" alt="Timeline built from every timestamp column of the open databases">
+</p>
+
 - **Column statistics**: nulls, distinct values, min/max/mean, top values, and the detected timestamp encoding +
   date range per column.
 - Record inspector with hex dump and every interpretation of a value (UTF-16, SID, GUID, 9 timestamp readings).
+- **Find in databases** (`Ctrl+Shift+F`): substring or regex across every column of every table of every open
+  database; double-click a hit to jump to the record.
+
+<p align="center">
+  <img src="docs/screenshots/search.png" width="900" alt="Find in databases - one SID across SRUM and NTDS">
+</p>
 
 **Extract** (`Ctrl+E`, right-click → *Extract selected rows…*)
 - Selected rows, displayed rows, query results, whole tables or whole databases → **CSV, XLSX, JSON, JSON Lines,
