@@ -21,8 +21,11 @@ from edb_explorer.core.values import display_value, interpret_timestamp
 
 app = typer.Typer(
     name="edb-explorer",
-    help=f"{__app_name__} - explore Microsoft ESE databases (.edb/.dit/.dat) from a GUI, CLI or MCP server.",
-    no_args_is_help=True,
+    help=(
+        f"{__app_name__} - explore Microsoft ESE databases (.edb/.dit/.dat) from a GUI, CLI or MCP server.\n\n"
+        "Run without a command (or double-click the executable) to open the desktop GUI."
+    ),
+    invoke_without_command=True,
     rich_markup_mode="rich",
     context_settings={"help_option_names": ["-h", "--help"]},
 )
@@ -38,6 +41,7 @@ def _version_callback(value: bool) -> None:
 
 @app.callback()
 def _root(
+    ctx: typer.Context,
     version: Annotated[
         bool, typer.Option("--version", "-V", callback=_version_callback, is_eager=True, help="Show version.")
     ] = False,
@@ -48,6 +52,17 @@ def _root(
         stream=sys.stderr,
         format="%(levelname)s %(name)s: %(message)s",
     )
+    if ctx.invoked_subcommand is None:
+        # No command: behave like a desktop application (double-click / bare `edb-explorer`).
+        _launch_gui([])
+
+
+def _launch_gui(files: list[str]) -> None:
+    try:
+        from edb_explorer.gui.app import run
+    except ImportError as exc:  # pragma: no cover
+        _fail(RuntimeError(f"GUI dependencies missing ({exc}). Install with: pip install 'edb-explorer[gui]'"))
+    raise typer.Exit(code=run(files))
 
 
 def _fail(exc: Exception) -> None:
@@ -67,12 +82,8 @@ def _open(path: Path) -> Any:
 def gui(
     files: Annotated[list[Path] | None, typer.Argument(help="Database files to open at startup.")] = None,
 ) -> None:
-    """Launch the desktop GUI."""
-    try:
-        from edb_explorer.gui.app import run
-    except ImportError as exc:  # pragma: no cover
-        _fail(RuntimeError(f"GUI dependencies missing ({exc}). Install with: pip install 'edb-explorer[gui]'"))
-    raise typer.Exit(code=run([str(f) for f in files or []]))
+    """Launch the desktop GUI (also what a bare `edb-explorer` does)."""
+    _launch_gui([str(f) for f in files or []])
 
 
 @app.command()

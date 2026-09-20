@@ -94,8 +94,16 @@ Everything is **strictly read-only** - the tool never writes to a database file.
 
 ### Binaries (no Python needed)
 
-Download the archive for your OS from the [releases page](https://github.com/keyuraghao/EDB_FILE_EXPLORER/releases),
-extract it, and run `EDB-Explorer` (GUI) or `edb-explorer` (CLI + MCP).
+Grab the build for your OS from the [releases page](https://github.com/keyuraghao/EDB_FILE_EXPLORER/releases):
+
+| OS | File | How to run |
+|---|---|---|
+| Windows | `EDB-Explorer-<ver>-setup.exe` | run the installer → **EDB Explorer** appears in the Start Menu / desktop |
+| Windows (portable) | `edb-explorer-<ver>-windows-x64.zip` | unzip, double-click `EDB-Explorer.exe` |
+| Linux | `edb-explorer-<ver>-linux-x86_64.tar.gz` | extract, double-click `EDB-Explorer`, or run `./install.sh` once to add it to your app menu |
+
+Each bundle also contains the `edb-explorer` console program for the CLI and MCP server. Running it
+without arguments opens the GUI too.
 
 ### From PyPI / source
 

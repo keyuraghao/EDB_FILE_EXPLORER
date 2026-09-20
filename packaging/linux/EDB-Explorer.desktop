@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=EDB Explorer
+GenericName=ESE Database Explorer
+Comment=Explore Microsoft ESE databases (ntds.dit, SRUDB.dat, Exchange .edb, WebCacheV01.dat)
+Exec=@APPDIR@/EDB-Explorer %F
+Icon=@APPDIR@/icon.png
+Path=@APPDIR@
+Terminal=false
+Categories=Utility;Security;
+Keywords=forensics;dfir;ese;edb;ntds;srum;exchange;
+StartupWMClass=EDB-Explorer

@@ -25,3 +25,21 @@ if (Test-Path $zip) { Remove-Item $zip }
 Compress-Archive -Path "dist\$name" -DestinationPath $zip
 (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower() + "  " + (Split-Path $zip -Leaf) | Out-File -Encoding ascii "$zip.sha256"
 Write-Host ">> Done: $zip"
+
+# Installer (Start Menu + Desktop shortcut, optional PATH and .edb association) when Inno Setup is available.
+$iscc = Get-Command iscc -ErrorAction SilentlyContinue
+if (-not $iscc) {
+    foreach ($p in @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe", "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe")) {
+        if (Test-Path $p) { $iscc = $p; break }
+    }
+} else { $iscc = $iscc.Source }
+if ($iscc) {
+    Write-Host ">> Building installer with $iscc"
+    & $iscc "/DVersion=$version" "/DSource=dist\$name" "packaging\installer.iss"
+    if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
+    $setup = "dist\EDB-Explorer-$version-setup.exe"
+    (Get-FileHash $setup -Algorithm SHA256).Hash.ToLower() + "  " + (Split-Path $setup -Leaf) | Out-File -Encoding ascii "$setup.sha256"
+    Write-Host ">> Done: $setup"
+} else {
+    Write-Host ">> Inno Setup not found - skipping installer (zip only)"
+}

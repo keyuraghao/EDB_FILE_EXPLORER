@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "edb-explorer"
-version = "0.1.0"
+version = "0.1.1"
 description = "Cross-platform GUI, CLI and MCP server for exploring Microsoft ESE (Extensible Storage Engine) databases - .edb, .dit, .dat - for digital forensics."
 readme = "README.md"
 license = { file = "LICENSE" }

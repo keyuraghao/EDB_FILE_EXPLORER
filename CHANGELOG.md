@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-20
+
+### Added
+- Windows installer (`EDB-Explorer-<version>-setup.exe`): Start Menu and desktop shortcuts, optional PATH entry
+  and `.edb`/`.dit` file association. The portable zip is still published.
+- Linux bundle ships `EDB-Explorer.desktop` and `install.sh` to register the app in the application menu.
+
+### Changed
+- Running `edb-explorer` with no command (or double-clicking the executable) now opens the GUI instead of
+  printing help.
+
 ## [0.1.0] - 2026-09-20
 
 ### Added

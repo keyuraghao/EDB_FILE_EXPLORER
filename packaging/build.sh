@@ -20,6 +20,9 @@ echo ">> Smoke test"
 
 echo ">> Packaging"
 cp README.md LICENSE CHANGELOG.md "dist/${NAME}/"
+cp packaging/linux/EDB-Explorer.desktop packaging/linux/install.sh "dist/${NAME}/"
+cp src/edb_explorer/resources/icon.png "dist/${NAME}/icon.png"
+chmod +x "dist/${NAME}/EDB-Explorer" "dist/${NAME}/edb-explorer" "dist/${NAME}/install.sh"
 tar -C dist -czf "dist/${NAME}-${OS}-${ARCH}.tar.gz" "${NAME}"
 ( cd dist && sha256sum "${NAME}-${OS}-${ARCH}.tar.gz" > "${NAME}-${OS}-${ARCH}.tar.gz.sha256" )
 echo ">> Done: dist/${NAME}-${OS}-${ARCH}.tar.gz"
