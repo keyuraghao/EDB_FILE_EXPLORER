@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-20
+
 ### Changed
 - **ESE decoding is ~2× faster** (record walks, search, export, counts, timeline, statistics) with
   byte-identical results: fixed-width numeric columns are unpacked with `struct` instead of cstruct's
