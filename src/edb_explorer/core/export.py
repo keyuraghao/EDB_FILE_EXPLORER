@@ -71,6 +71,9 @@ def export_table(
     info = db.table(real)
     cols = columns or info.column_names
     types = db.column_types(real)
+    # Writers look cells up by name, so projecting every row onto the full column list is wasted work;
+    # keep it when a subset was requested or when a filter runs (it must see exactly the projected row).
+    wanted = cols if row_filter is not None or (columns and set(columns) != set(types)) else None
     title = f"{db.path.name} - {info.display_name}"
     kw: dict[str, Any] = {}
     if fmt == "xlsx":
@@ -79,7 +82,7 @@ def export_table(
         kw = {"subtitle": f"Table {real} from {db.path}"}
     try:
         with make_writer(fmt, output, cols, types, title, bytes_mode, **kw) as w:
-            for index, values in db.iter_records(real, columns=cols, stop=limit, row_filter=row_filter):
+            for index, values in db.iter_records(real, columns=wanted, stop=limit, row_filter=row_filter):
                 w.write({"_row": index, **values})
                 if progress and w.count % 500 == 0 and not progress(w.count):
                     break

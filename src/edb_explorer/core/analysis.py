@@ -57,9 +57,9 @@ def detect_timestamp_columns(db: Database, table: str, sample: int = 300) -> dic
     samples: dict[str, list[Any]] = {c: [] for c in types if c not in kinds}
     if samples:
         for _, values in db.iter_records(real, stop=sample):
-            for c, bucket in samples.items():
-                v = values.get(c)
-                if v is not None:
+            for c, v in values.items():
+                bucket = samples.get(c)
+                if bucket is not None and v is not None:
                     bucket.append(v)
         for c, vals in samples.items():
             if not vals:
@@ -153,10 +153,9 @@ def column_statistics(
     n = 0
     for _, values in db.iter_records(real, stop=max_rows, include_nulls=False):
         n += 1
-        for c in names:
-            v = values.get(c)
-            st = stats[c]
-            if v is None:
+        for c, v in values.items():  # rows are sparse; every column's state is independent of the others
+            st = stats.get(c)
+            if st is None or v is None:
                 continue
             st.non_null += 1
             kind = type(v).__name__

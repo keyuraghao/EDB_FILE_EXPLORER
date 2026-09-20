@@ -93,3 +93,60 @@ def test_hexdump() -> None:
     text = hexdump(b"hello world\x00\x01", max_bytes=8)
     assert text.splitlines()[0].startswith("00000000  68 65 6c 6c 6f 20 77 6f")
     assert "more bytes" in text
+
+
+def _display_generic(value: object, column_type: str | None, max_length: int) -> str:
+    """display_value without its fast paths - the reference the fast paths must reproduce."""
+    norm = normalize_value(value, column_type, "smart", max_length)
+    if norm is None:
+        return ""
+    if isinstance(norm, list):
+        return "[" + ", ".join(_display_generic(v, None, max_length) for v in norm) + "]"
+    return str(norm).replace("\r", "\\r").replace("\n", "\\n")
+
+
+def test_display_value_fast_paths_match_generic() -> None:
+    class Int32(int):  # stands in for dissect's cstruct int subclasses
+        pass
+
+    values: list[object] = [
+        "plain",
+        "",
+        "x" * 500,
+        "line\nbreak\r",
+        "exactly" + "!" * 193,
+        1,
+        Int32(-7),
+        True,
+        0,
+        44197.5,
+        1_600_000_000,
+        float("nan"),
+        float("inf"),
+        2**70,
+        b"a\x00b\x00",
+        [1, "a", b"\x01"],
+        None,
+    ]
+
+    def outcome(fn: object, *args: object) -> object:
+        try:
+            return fn(*args)  # type: ignore[operator]
+        except Exception as exc:  # e.g. a DateTime that does not fit in 64 bits raises on both routes
+            return ("raised", type(exc), str(exc))
+
+    for value in values:
+        for ctype in (None, "Long", "DateTime", "ts:unix", "ts:ole", "Text"):
+            for max_length in (5, 200, 100_000):
+                fast = outcome(display_value, value, ctype, max_length)
+                generic = outcome(_display_generic, value, ctype, max_length)
+                assert fast == generic, (value, ctype, max_length)
+
+
+def test_looks_like_utf16le_odd_byte_check() -> None:
+    from edb_explorer.core.values import looks_like_utf16le
+
+    assert looks_like_utf16le("hello".encode("utf-16-le"))
+    assert not looks_like_utf16le(b"h\x00e\x01")  # a non-NUL high byte anywhere disqualifies it
+    assert not looks_like_utf16le(b"h\x00e")  # odd length
+    assert not looks_like_utf16le(b"\x00\x00")  # decodes to nothing printable

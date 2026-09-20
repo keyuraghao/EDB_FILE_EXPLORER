@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import functools
+import hashlib
 import logging
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from struct import Struct
 from typing import Any
 
-from dissect.esedb import EseDB
+import dissect.esedb.record as _dissect_record
+from dissect.esedb import EseDB, compression
+from dissect.esedb.c_esedb import COLUMN_TYPE_MAP, TAGFLD_HEADER
 from dissect.esedb.exceptions import Error as DissectError
 from dissect.esedb.exceptions import InvalidDatabase
 from dissect.esedb.record import RecordData
@@ -56,6 +61,197 @@ _HEADER_INTS = (
     "ulPagePatchCount",
 )
 _HEADER_TIMES = ("logtimeAttach", "logtimeDetach", "logtimeConsistent", "logtimeRepair", "logtimeGenMaxCreate")
+
+
+# --------------------------------------------------------------------------- #
+# Fixed-width numeric columns: skip cstruct's generic bytes -> BytesIO -> unpack path
+# --------------------------------------------------------------------------- #
+def _fast_numeric_parser(ctype: Any) -> Callable[[bytes], Any] | None:
+    """Direct ``Struct.unpack_from`` for a cstruct packed type; same result type, same error on bad input."""
+    packchar = getattr(ctype, "packchar", None)
+    endian = getattr(getattr(ctype, "cs", None), "endian", None)
+    if not isinstance(ctype, type) or not packchar or not endian or getattr(ctype, "size", None) is None:
+        return None
+    unpack_from = Struct(f"{endian}{packchar}").unpack_from
+    new = ctype.__new__
+
+    def parse(buf: Any) -> Any:
+        try:
+            return new(ctype, unpack_from(buf)[0])
+        except Exception:
+            return ctype(buf)  # short / odd buffers: let dissect raise its own error
+
+    parse.__name__ = f"fast_{ctype.__name__}"
+    return parse
+
+
+def _install_fast_numeric_parsers() -> None:
+    for key, ct in list(COLUMN_TYPE_MAP.items()):
+        if getattr(ct.parse, "__name__", "").startswith("fast_"):
+            continue
+        fast = _fast_numeric_parser(ct.parse)
+        if fast is not None:
+            COLUMN_TYPE_MAP[key] = ct._replace(parse=fast)
+
+
+_install_fast_numeric_parsers()
+
+
+# --------------------------------------------------------------------------- #
+# Record decoding fast paths
+#
+# dissect.esedb is written for clarity, not throughput: every record builds two
+# functools.lru_cache wrappers, every tagged value does four enum.Flag ``&``
+# operations, and as_dict() goes through get() -> _get_fixed()/_get_variable()
+# for every column.  The replacements below do exactly the same work with the
+# same results and the same errors, just with less ceremony.  Each one is only
+# installed when the dissect code it replaces is the code it was validated
+# against (fingerprint of the referenced names), so a dissect upgrade that
+# changes those internals silently falls back to dissect's own implementation.
+# --------------------------------------------------------------------------- #
+def _fingerprint(fn: Any) -> str:
+    code = fn.__code__
+    return hashlib.sha1(repr((code.co_argcount, code.co_names, code.co_varnames)).encode()).hexdigest()[:12]
+
+
+_VALIDATED = {
+    "RecordData.get": "4d37981752ba",
+    "RecordData.as_dict": "77d5108f61a8",
+    "RecordData._parse_value": "3a9e9e6c773a",
+    "RecordData._get_fixed": "104b8d62bd03",
+    "RecordData._get_variable": "8c2d1756d1b3",
+}
+
+
+def _matches(*names: str) -> bool:
+    cls_name = "RecordData"
+    for name in names:
+        fn = getattr(RecordData, name.removeprefix(cls_name + "."))
+        if _fingerprint(fn) != _VALIDATED.get(name):
+            log.debug("dissect.esedb %s changed - keeping the stock implementation", name)
+            return False
+    return True
+
+
+def _memo(maxsize: int) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Drop-in for the per-record ``lru_cache(4096)`` in ``RecordData.__init__`` (creating an lru_cache costs more
+    than a whole small record).  Positional-only dict cache, bounded by ``maxsize``."""
+
+    def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
+        cache: dict[tuple[Any, ...], Any] = {}
+
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            key = args if not kwargs else (args, tuple(sorted(kwargs.items())))
+            try:
+                return cache[key]
+            except KeyError:
+                if len(cache) >= maxsize:
+                    cache.clear()
+                cache[key] = result = fn(*args, **kwargs)
+                return result
+
+        wrapper.__wrapped__ = fn  # type: ignore[attr-defined]
+        wrapper.cache_clear = cache.clear  # type: ignore[attr-defined]
+        return wrapper
+
+    return decorator
+
+
+_orig_parse_value = RecordData._parse_value
+_orig_as_dict = RecordData.as_dict
+_FLAG_MULTI = int(TAGFLD_HEADER.MultiValues)
+_FLAG_SEPARATED = int(TAGFLD_HEADER.Separated)
+_FLAG_COMPRESSED = int(TAGFLD_HEADER.Compressed)
+
+
+def _parse_value_fast(
+    self: RecordData, column: Any, value: Any, tag_field: Any = None, errors: str | None = "backslashreplace"
+) -> Any:
+    """``RecordData._parse_value`` with integer flag tests instead of enum.Flag arithmetic."""
+    if self.esedb.impacket_compat:
+        return _orig_parse_value(self, column, value, tag_field, errors)
+    ctype = column.ctype
+    parse_func = ctype.parse
+    if column.is_text:
+        parse_func = functools.partial(ctype.parse, encoding=column.encoding, errors=errors)
+    multi = False
+    if tag_field is not None:
+        flags = int(tag_field.flags)
+        if flags & _FLAG_MULTI:
+            value = self._parse_multivalue(value, tag_field)
+            multi = True
+        elif flags & _FLAG_SEPARATED:
+            value = self.table.get_long_value(bytes(value))
+        elif flags & _FLAG_COMPRESSED:
+            value = compression.decompress(value)
+    if parse_func is None:
+        parse_func = _dissect_record.noop
+    return list(map(parse_func, value)) if multi else parse_func(value)
+
+
+def _as_dict_fast(self: RecordData, raw: bool = False, errors: str | None = "backslashreplace") -> dict[str, Any]:
+    """``RecordData.as_dict`` with the fixed/variable column paths inlined (tagged columns still go via get())."""
+    if raw or self.header is None or self.esedb.impacket_compat:
+        return _orig_as_dict(self, raw, errors)
+    obj: dict[str, Any] = {}
+    col_map = self.table._column_id_map
+    data = self.data
+    parse = self._parse_value
+    bitmap = self._fixed_null_bitmap
+    for cid in range(1, self._last_fixed_id + 1):
+        column = col_map[cid]
+        try:
+            byte, bit = divmod(cid - 1, 8)
+            if bitmap[byte] & (1 << bit):
+                obj[column.name] = None
+            else:
+                offset = 4 + column.offset
+                obj[column.name] = parse(column, data[offset : offset + column.size], None, errors)
+        except Exception as e:
+            obj[column.name] = f"!ERROR! {e}"
+    offsets = self._variable_offsets
+    var_start = self._variable_data_start
+    for i, cid in enumerate(range(128, self._last_variable_id + 1)):
+        column = col_map[cid]
+        try:
+            end = offsets[i]
+            if end & 0x8000:
+                obj[column.name] = None
+            else:
+                start = 0 if i == 0 else offsets[i - 1] & 0x7FFF
+                obj[column.name] = parse(column, data[var_start + start : var_start + end], None, errors)
+        except Exception as e:
+            obj[column.name] = f"!ERROR! {e}"
+    get = self.get
+    for idx in range(self._tagged_data_count):
+        column = col_map[self._get_tag_field(idx).identifier]
+        try:
+            obj[column.name] = get(column, raw, errors)
+        except Exception as e:
+            obj[column.name] = f"!ERROR! {e}"
+    return obj
+
+
+def _install_record_fast_paths() -> dict[str, bool]:
+    # Fingerprints are taken before anything is patched.
+    parse_value_ok = _matches("RecordData._parse_value")
+    as_dict_ok = parse_value_ok and _matches(
+        "RecordData.get", "RecordData.as_dict", "RecordData._get_fixed", "RecordData._get_variable"
+    )
+    if getattr(_dissect_record, "lru_cache", None) is functools.lru_cache:
+        _dissect_record.lru_cache = _memo
+    if parse_value_ok:
+        RecordData._parse_value = _parse_value_fast
+    if as_dict_ok:
+        RecordData.as_dict = _as_dict_fast
+    return {
+        "memo": _dissect_record.lru_cache is _memo,
+        "parse_value": RecordData._parse_value is _parse_value_fast,
+        "as_dict": RecordData.as_dict is _as_dict_fast,
+    }
+
+
+FAST_PATHS = _install_record_fast_paths()
 
 
 # --------------------------------------------------------------------------- #

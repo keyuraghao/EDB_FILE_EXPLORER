@@ -184,9 +184,11 @@ class SqlWorkspace:
             placeholders = ", ".join("?" for _ in cols)
             insert = f"INSERT INTO {qname} VALUES ({placeholders})"
             batch: list[tuple[Any, ...]] = []
+            col_types = [(c, types.get(c)) for c in cols]
             n = 0
             for n, (_, values) in enumerate(db.iter_records(real, include_nulls=False), start=1):
-                batch.append(tuple(_cell(values.get(c), types.get(c)) for c in cols))
+                get = values.get
+                batch.append(tuple(None if (v := get(c)) is None else _cell(v, t) for c, t in col_types))
                 if len(batch) >= 2000:
                     self._conn.executemany(insert, batch)
                     batch.clear()

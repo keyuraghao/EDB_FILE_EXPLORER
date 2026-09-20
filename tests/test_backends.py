@@ -298,3 +298,136 @@ def test_sql_dump(sql_dump: Path) -> None:
         assert posts[0]["post_title"] == "Hello; world" and "post_status" not in posts[0]
         assert db.fetch("events").rows == [{"_row": 0, "id": "1", "what": "login"}, {"_row": 1, "id": "2"}]
         assert db.native_sql_connection() is not None
+
+
+# --------------------------------------------------------------------------- #
+# ESE decoding fast paths (must stay active and must stay equivalent to dissect)
+# --------------------------------------------------------------------------- #
+def test_ese_fast_paths_are_installed() -> None:
+    """If dissect.esedb changes the internals we replace, the guards fall back to the stock code; make that visible."""
+    from edb_explorer.core.backends import ese
+
+    assert ese.FAST_PATHS == {"memo": True, "parse_value": True, "as_dict": True}
+
+
+def test_ese_fast_numeric_parser_matches_cstruct() -> None:
+    from dissect.esedb.c_esedb import COLUMN_TYPE_MAP, c_esedb
+
+    from edb_explorer.core.backends.ese import _fast_numeric_parser
+
+    samples = {
+        c_esedb.uint8: b"\xfe",
+        c_esedb.int16: b"\xff\x7f",
+        c_esedb.int32: b"\x00\x00\x00\x80",
+        c_esedb.uint32: b"\xff\xff\xff\xff",
+        c_esedb.int64: b"\x01\x00\x00\x00\x00\x00\x00\x80",
+        c_esedb.float: struct.pack("<f", 1.5),
+        c_esedb.double: struct.pack("<d", -2.25),
+    }
+    for ctype, raw in samples.items():
+        fast = _fast_numeric_parser(ctype)
+        assert fast is not None
+        for buf in (raw, raw + b"\xaa\xbb", memoryview(raw)):  # trailing bytes are ignored, like cstruct
+            expected = ctype(buf)  # the stock metaclass path: bytes -> BytesIO -> unpack
+            got = fast(buf)
+            assert got == expected and type(got) is type(expected)
+        with pytest.raises(EOFError):  # short input: dissect's own error
+            fast(raw[:-1])
+    # Every fixed-width numeric JET type now uses the fast parser; everything else is untouched.
+    fast_names = {
+        ct.parse.__name__ for ct in COLUMN_TYPE_MAP.values() if getattr(ct.parse, "__name__", "").startswith("fast_")
+    }
+    assert fast_names == {
+        "fast_uint8",
+        "fast_int16",
+        "fast_int32",
+        "fast_int64",
+        "fast_float",
+        "fast_double",
+        "fast_uint32",
+        "fast_uint16",
+    }
+    assert COLUMN_TYPE_MAP[10].parse.__name__ == "decode_text"  # Text
+
+
+def test_ese_memo_caches_per_arguments() -> None:
+    from edb_explorer.core.backends.ese import _memo
+
+    calls: list[tuple] = []
+
+    @_memo(2)
+    def f(*args, **kwargs):
+        calls.append((args, tuple(kwargs.items())))
+        return len(calls)
+
+    assert f(1) == 1 and f(1) == 1 and f(1, True) == 2 and f(1, is_derived=True) == 3
+    assert f(1) == 4  # bounded: cache was cleared once it reached maxsize
+    assert f.__wrapped__ is not None
+
+
+# --------------------------------------------------------------------------- #
+# SQL dump statement splitting
+# --------------------------------------------------------------------------- #
+MYSQLDUMP = (
+    "-- MySQL dump 10.13  Distrib 8.0.36\n"
+    "--\n"
+    "-- Host: localhost    Database: shop\n"
+    "-- ------------------------------------------------------\n"
+    "/*!40101 SET NAMES utf8mb4 */;\n"
+    "# a MySQL hash comment; with a semicolon\n"
+    "CREATE TABLE `t` (`a` int, `b` text);\n"
+    "/*/ not closed by its own opener */ INSERT INTO `t` VALUES (1,'x'),(2,'O\\'Brien -- not a comment'),"
+    '(3,\'multi\\nline; still "one" value\'),(4,"it\'s"),(5,NULL);\n'
+    "COPY public.ev (id, what) FROM stdin;\n1\tlogin\n2\t\\N\n\\.\n"
+    "INSERT INTO t VALUES (6,'tail')"
+)
+
+
+def _split(text: str, size: int) -> list[str]:
+    from edb_explorer.core.backends.sqldump import iter_statements
+
+    return list(iter_statements(text[k : k + size] for k in range(0, len(text), size)))
+
+
+def test_sql_dump_statements_are_independent_of_read_size() -> None:
+    ref = _split(MYSQLDUMP, len(MYSQLDUMP))
+    assert ref[:2] == [
+        "CREATE TABLE `t` (`a` int, `b` text)",
+        "INSERT INTO `t` VALUES (1,'x'),(2,'O\\'Brien -- not a comment'),(3,'multi\\nline; still \"one\" value'),(4,\"it's\"),(5,NULL)",
+    ]
+    assert (
+        ref[2].startswith("COPY public.ev")
+        and ref[3] == "\n1\tlogin\n2\t\\N\n\\.\n"
+        and ref[4] == "INSERT INTO t VALUES (6,'tail')"
+    )
+    for size in (1, 2, 3, 5, 8, 13, 64):  # every boundary position, incl. inside \' , -- , /* , */ and \.
+        assert _split(MYSQLDUMP, size) == ref, size
+
+
+def test_sql_dump_real_mysqldump_header_loads(tmp_path: Path) -> None:
+    p = tmp_path / "shop.sql"
+    p.write_text(MYSQLDUMP, encoding="utf-8")
+    with Database(p) as db:
+        page = db.fetch("t", limit=10)
+        assert [r.get("b") for r in page.rows] == [
+            "x",
+            "O'Brien -- not a comment",
+            'multi\nline; still "one" value',
+            "it's",
+            None,
+            "tail",
+        ]
+        assert db.count_records("ev") == 2
+
+
+def test_sql_dump_parse_values_edge_cases() -> None:
+    from edb_explorer.core.backends.sqldump import parse_values
+
+    assert parse_values("(1,'a''b',\"c\\\"d\",X'4142',0x43,TRUE,NULL,-1.5e3,'esc\\t\\n\\\\')") == [
+        [1, "a'b", 'c"d', b"AB", b"C", 1, None, -1500.0, "esc\t\n\\"]
+    ]
+    assert parse_values(" (1, 'x') , (2,'y')\n") == [[1, "x"], [2, "y"]]
+    with pytest.raises(ValueError):
+        parse_values("(1,'unterminated")
+    with pytest.raises(ValueError):
+        parse_values("1,2)")

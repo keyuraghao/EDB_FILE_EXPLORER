@@ -6,6 +6,57 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **ESE decoding is ~2× faster** (record walks, search, export, counts, timeline, statistics) with
+  byte-identical results: fixed-width numeric columns are unpacked with `struct` instead of cstruct's
+  generic stream path, the per-record `lru_cache` wrappers dissect builds are replaced by a plain dict
+  memo, and `as_dict` / `_parse_value` fast paths avoid enum arithmetic and per-column dispatch. Every
+  fast path is guarded by a fingerprint of the dissect code it replaces and silently falls back to the
+  stock implementation on a dissect upgrade (`ese.FAST_PATHS` reports what is active; the integration
+  suite compares fast and stock decoding record by record).
+- `Database.iter_records` no longer re-evaluates per-row constants (on a 3,000-column `ntds.dit` this alone
+  was half the walk time), skips decoding of rows before `start` when there is no filter, and decodes and
+  null-strips in one pass. Counting uses the raw walk.
+- Column statistics, timestamp detection, export writers and the SQL materialiser iterate the values a
+  sparse row actually has instead of every schema column.
+- `display_value` / `normalize_value` short-circuit plain strings and numbers; the UTF-16 heuristic and the
+  LevelDB key/value text checks run in C instead of per-byte Python loops; the LevelDB `live` view is
+  computed once per database.
+- GUI record grid: display strings are only cached for values that are expensive to render (blobs,
+  timestamps, lists, long text) - a filtered 10k-row SRUM table now costs ~0.3 KB/row of cache instead of
+  ~1.9 KB/row - row indices live in a compact array with bisect lookups instead of a dict, and the filter
+  proxy no longer re-sorts the seen-column set for every row.
+- SQL dump statement splitting and value tokenising scan between significant characters instead of one
+  Python step per character (~3.5× faster on INSERT-heavy dumps).
+
+#### Measurements
+Wall-clock on real evidence, same machine, outputs hashed and identical before/after.
+
+| Operation | SRUDB.dat (22k rows) | ntds.dit (18k rows, 3,496-col `datatable`) |
+|---|---|---|
+| Walk all tables (raw) | 1.46s → 0.84s (1.7×) | 5.05s → 2.40s (2.1×) |
+| Walk all tables (decoded) | 1.22s → 0.61s (2.0×) | 3.78s → 2.83s (1.3×) |
+| Search, 500 hits | 1.34s → 0.71s (1.9×) | 5.37s → 2.47s (2.2×) |
+| Column statistics, 6 tables | 0.11s → 0.07s (1.6×) | 7.35s → 3.36s (2.2×) |
+| Timeline | 1.56s → 0.78s (2.0×) | 0.23s → 0.08s (2.7×) |
+| Database summary | 0.12s → 0.06s (2.1×) | 0.52s → 0.06s (8.2×) |
+| Materialise 8 tables to SQL + query | 1.06s → 0.70s (1.5×) | 0.71s → 0.59s (1.2×) |
+| CSV export, 8 tables | 0.84s → 0.42s (2.0×) | 12.21s → 4.89s (2.5×) |
+| Count all tables | 1.01s → 0.40s (2.5×) | 5.25s → 2.56s (2.1×) |
+
+Exchange `.edb` open: 0.67s → 0.34s. GUI grid: display cache after filtering a 9.6k-row SRUM table
+1,895 → 266 B/row; row-index lookups ~100 MB → 8 MB per million rows; filtering the ntds `datatable`
+(831 populated columns) 1.91s → 1.14s. SQL dump (25 MB, 300k rows): statement splitting 13 → 45 MB/s,
+full load 4.57s → 2.37s, and all 300,000 rows load (previously 299,800).
+
+### Fixed
+- SQL dumps that start with consecutive `--` comment lines (every `mysqldump` file) failed to open with
+  `pop from empty list`; a line starting with a single `-` after a comment line was swallowed; `/*/` was
+  treated as a complete comment.
+- SQL dump statements whose `\'` escape, `--`, `/*` or `*/` straddled a 1 MiB read boundary were mis-split
+  and their rows silently dropped; splitting is now independent of the read size. `#` comments follow the
+  MySQL rule (anywhere outside a literal), and a CRLF `\.` COPY terminator is recognised.
+
 ## [0.3.0] - 2026-09-20
 
 ### Added

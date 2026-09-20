@@ -73,73 +73,121 @@ def _unquote(ident: str) -> str:
 # --------------------------------------------------------------------------- #
 # Statement splitting
 # --------------------------------------------------------------------------- #
+_STATEMENT_SPECIAL = re.compile(r"""['"`;#/-]""")  # characters that can change state outside a string literal
+_STRING_SPECIAL = {"'": re.compile(r"[\\']"), '"': re.compile(r'[\\"]'), "`": re.compile("`")}
+_TOKEN_STOP = re.compile(r"[(),]")
+
+
 def iter_statements(text_iter: Iterator[str]) -> Iterator[str]:
-    """Yield SQL statements (``;``-terminated) and COPY blocks from a stream of text chunks."""
+    """Yield SQL statements (``;``-terminated) and COPY blocks from a stream of text chunks.
+
+    Handles ``'...'`` / ``"..."`` literals with backslash escapes, backtick identifiers, ``--`` and MySQL
+    ``#`` line comments, ``/* */`` block comments and PostgreSQL ``COPY ... FROM stdin`` data
+    terminated by a ``\\.`` line.  Scanning jumps between significant characters rather than stepping
+    through every character, and a token split across two chunks (``\\'``, ``--``, ``/*``, ``*/``) is
+    carried over so results do not depend on the read size.
+    """
     buf: list[str] = []
     quote: str | None = None
-    in_line_comment = in_block_comment = False
-    copy_mode = False
-    prev = ""
+    line_comment = block_comment = copy_mode = False
+    copy_line = ""  # partial COPY data line carried across chunks
+    carry = ""  # trailing character whose meaning depends on the next chunk
     for chunk in text_iter:
-        i = 0
-        n = len(chunk)
+        if carry:
+            chunk = carry + chunk
+            carry = ""
+        i, n = 0, len(chunk)
         while i < n:
-            c = chunk[i]
             if copy_mode:
-                buf.append(c)
-                if c == "\n" and "".join(buf[-3:]) == "\\.\n":
+                j = chunk.find("\n", i)
+                if j == -1:
+                    buf.append(chunk[i:])
+                    copy_line += chunk[i:]
+                    i = n
+                    break
+                buf.append(chunk[i : j + 1])
+                line, copy_line = copy_line + chunk[i:j], ""
+                i = j + 1
+                if line.rstrip("\r") == "\\.":
                     yield "".join(buf)
                     buf = []
                     copy_mode = False
-                i += 1
-                prev = c
-                continue
-            if in_line_comment:
-                if c == "\n":
-                    in_line_comment = False
-                i += 1
-                continue
-            if in_block_comment:
-                if c == "/" and prev == "*":
-                    in_block_comment = False
-                prev = c
-                i += 1
-                continue
-            if quote:
-                buf.append(c)
-                if c == "\\" and quote != "`":
-                    if i + 1 < n:
-                        buf.append(chunk[i + 1])
-                        i += 2
-                        prev = ""
-                        continue
-                elif c == quote:
+            elif line_comment:
+                j = chunk.find("\n", i)
+                if j == -1:
+                    i = n
+                else:
+                    i = j + 1  # the newline itself is dropped with the comment
+                    line_comment = False
+            elif block_comment:
+                j = chunk.find("*/", i)
+                if j == -1:
+                    if chunk.endswith("*"):
+                        carry = "*"
+                    i = n
+                else:
+                    i = j + 2
+                    block_comment = False
+            elif quote:
+                m = _STRING_SPECIAL[quote].search(chunk, i)
+                if m is None:
+                    buf.append(chunk[i:])
+                    i = n
+                    break
+                j = m.start()
+                if j > i:
+                    buf.append(chunk[i:j])
+                if chunk[j] == "\\":
+                    if j + 1 < n:
+                        buf.append(chunk[j : j + 2])
+                        i = j + 2
+                    else:
+                        carry = "\\"
+                        i = n
+                else:
+                    buf.append(quote)
                     quote = None
-                i += 1
-                prev = c
-                continue
-            if c in ("'", '"', "`"):
-                quote = c
-                buf.append(c)
-            elif (c == "-" and prev == "-" and not buf[:-1]) or (c == "-" and prev == "-" and buf and buf[-1] == "-"):
-                buf.pop()
-                in_line_comment = True
-            elif c == "#" and (not buf or buf[-1] in "\n\r"):
-                in_line_comment = True
-            elif c == "*" and prev == "/":
-                buf.pop()
-                in_block_comment = True
-            elif c == ";":
-                stmt = "".join(buf).strip()
-                buf = []
-                if stmt:
-                    yield stmt
-                    if _COPY_RE.match(stmt):
-                        copy_mode = True
+                    i = j + 1
             else:
-                buf.append(c)
-            prev = c
-            i += 1
+                m = _STATEMENT_SPECIAL.search(chunk, i)
+                if m is None:
+                    buf.append(chunk[i:])
+                    i = n
+                    break
+                j = m.start()
+                if j > i:
+                    buf.append(chunk[i:j])
+                c = chunk[j]
+                if c in "'\"`":
+                    buf.append(c)
+                    quote = c
+                    i = j + 1
+                elif c == ";":
+                    stmt = "".join(buf).strip()
+                    buf = []
+                    i = j + 1
+                    if stmt:
+                        yield stmt
+                        if _COPY_RE.match(stmt):
+                            copy_mode = True
+                            copy_line = ""
+                elif c == "#":
+                    line_comment = True
+                    i = j + 1
+                elif j + 1 >= n:  # "-" or "/" as the last character: needs the next chunk to decide
+                    carry = c
+                    i = n
+                elif c == "-" and chunk[j + 1] == "-":
+                    line_comment = True
+                    i = j + 2
+                elif c == "/" and chunk[j + 1] == "*":
+                    block_comment = True
+                    i = j + 2
+                else:
+                    buf.append(c)
+                    i = j + 1
+    if carry and carry != "*":
+        buf.append(carry)  # a lone trailing "-", "/" or "\\" is literal text
     tail = "".join(buf).strip()
     if tail:
         yield tail
@@ -170,22 +218,29 @@ def parse_values(text: str) -> list[list[Any]]:
             if c in ("'", '"'):
                 i += 1
                 out: list[str] = []
+                scan = _STRING_SPECIAL[c].search
                 while i < n:
-                    ch = text[i]
-                    if ch == "\\" and i + 1 < n:
-                        nxt = text[i + 1]
+                    m = scan(text, i)
+                    if m is None:  # unterminated literal: take the rest, the caller reports the error
+                        out.append(text[i:])
+                        i = n
+                        break
+                    j = m.start()
+                    if j > i:
+                        out.append(text[i:j])
+                    if text[j] == "\\" and j + 1 < n:
+                        nxt = text[j + 1]
                         out.append(_ESCAPES.get(nxt, nxt))
-                        i += 2
-                    elif ch == c:
-                        if i + 1 < n and text[i + 1] == c:  # doubled quote
-                            out.append(c)
-                            i += 2
-                        else:
-                            i += 1
-                            break
+                        i = j + 2
+                    elif text[j] == "\\":
+                        out.append("\\")
+                        i = j + 1
+                    elif j + 1 < n and text[j + 1] == c:  # doubled quote
+                        out.append(c)
+                        i = j + 2
                     else:
-                        out.append(ch)
-                        i += 1
+                        i = j + 1
+                        break
                 row.append("".join(out))
             elif text.startswith(("X'", "x'"), i):
                 j = text.index("'", i + 2)
@@ -194,11 +249,19 @@ def parse_values(text: str) -> list[list[Any]]:
             else:
                 j = i
                 depth = 0
-                while j < n and (depth or text[j] not in ",)"):
-                    if text[j] == "(":
+                while True:  # up to the next top-level "," or ")" (function calls such as POINT(1 2) may nest)
+                    m = _TOKEN_STOP.search(text, j)
+                    if m is None:
+                        j = n
+                        break
+                    j = m.start()
+                    ch = text[j]
+                    if ch == "(":
                         depth += 1
-                    elif text[j] == ")":
-                        depth -= 1
+                    elif depth:
+                        depth -= ch == ")"
+                    else:
+                        break
                     j += 1
                 tok = text[i:j].strip()
                 i = j

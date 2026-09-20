@@ -212,10 +212,27 @@ class Database:
                 self._counts[real] = fast
             else:
                 n = 0
-                for _ in self.iter_records(real, include_nulls=False):
+                for _ in self._iter_raw(real):
                     n += 1
                 self._counts[real] = n
         return self._counts[real]
+
+    def _iter_raw(self, real: str) -> Iterator[tuple[int, dict[str, Any]]]:
+        """Backend rows with their zero-based index; the lock is held per record, not per table."""
+        lock = self._lock
+        with lock:
+            iterator = self.backend.iter_rows(real)
+        index = 0
+        while True:
+            with lock:
+                if self._closed:
+                    return
+                try:
+                    values = next(iterator)
+                except StopIteration:
+                    return
+            yield index, values
+            index += 1
 
     def cached_count(self, name: str) -> int | None:
         return self._counts.get(self.resolve_table_name(name))
@@ -245,32 +262,42 @@ class Database:
             missing = [c for c in wanted if c not in types]
             if missing:
                 raise TableNotFoundError(f"Unknown column(s) in {real}: {', '.join(missing)}")
+        # Decide once per call what each row needs; the per-row loop below only does work that can vary by row.
+        needs_norm = bytes_mode != "raw" or max_length is not None or any(t.startswith("ts:") for t in types.values())
+        # Without a filter, rows before ``start`` are skipped by position and never need decoding.
+        skip_undecoded = row_filter is None
+        # One pass for decode + null-strip when nothing has to see the un-stripped row (a decoded value can
+        # itself become None, e.g. a zero DateTime, so the strip still happens after decoding).
+        fused = needs_norm and not include_nulls and row_filter is None
+        types_get = types.get
         matched = 0
-        with self._lock:
-            iterator = self.backend.iter_rows(real)
-        index = -1
-        while True:
-            with self._lock:
-                if self._closed:
-                    return
-                try:
-                    values = next(iterator)
-                except StopIteration:
-                    break
-            index += 1
-            if wanted:
-                values = {c: values.get(c) for c in wanted}
-            if bytes_mode != "raw" or max_length is not None or any(t.startswith("ts:") for t in types.values()):
-                values = {k: normalize_value(v, types.get(k), bytes_mode, max_length) for k, v in values.items()}
-            if row_filter is not None and not row_filter(values):
-                continue
-            if include_nulls and not wanted:
-                values = {c: values.get(c) for c in types}
-            elif not include_nulls:
-                values = {k: v for k, v in values.items() if v is not None}
-            if matched < start:
+        for index, values in self._iter_raw(real):
+            if skip_undecoded and matched < start:
                 matched += 1
                 continue
+            if wanted:
+                values = {c: values.get(c) for c in wanted}
+            if fused:
+                values = {
+                    k: nv
+                    for k, v in values.items()
+                    if v is not None and (nv := normalize_value(v, types_get(k), bytes_mode, max_length)) is not None
+                }
+            elif needs_norm:
+                values = {
+                    k: (normalize_value(v, types_get(k), bytes_mode, max_length) if v is not None else None)
+                    for k, v in values.items()
+                }
+            if row_filter is not None:
+                if not row_filter(values):
+                    continue
+                if matched < start:
+                    matched += 1
+                    continue
+            if include_nulls and not wanted:
+                values = {c: values.get(c) for c in types}
+            elif not include_nulls and not fused:
+                values = {k: v for k, v in values.items() if v is not None}
             matched += 1
             yield index, values
             if stop is not None and matched >= stop:

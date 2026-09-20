@@ -290,7 +290,7 @@ def looks_like_utf16le(data: bytes) -> bool:
     if len(data) < 2 or len(data) % 2:
         return False
     sample = data[:512]
-    if any(sample[i] for i in range(1, len(sample), 2)):
+    if sample[1::2].strip(b"\x00"):  # any non-NUL high byte
         return False
     try:
         text = sample.decode("utf-16-le")
@@ -381,6 +381,8 @@ def normalize_value(
     """
     if value is None:
         return None
+    if type(value) is str:  # the common case for SQLite / text-heavy tables; checked first, the branches are disjoint
+        return _truncate(value, max_length)
     if isinstance(value, list):
         return [normalize_value(v, column_type, bytes_mode, max_length) for v in value]
     if isinstance(value, bool | int | float):
@@ -406,6 +408,14 @@ def normalize_value(
 
 def display_value(value: Any, column_type: str | None = None, max_length: int = 200) -> str:
     """Single-line string for table cells."""
+    if value is None:
+        return ""
+    # Fast paths that give exactly the result of the generic route below.
+    if type(value) is str:
+        if (max_length is None or len(value) <= max_length) and "\r" not in value and "\n" not in value:
+            return value
+    elif isinstance(value, int | float) and column_type != "DateTime" and not (column_type or "").startswith("ts:"):
+        return str(value)
     norm = normalize_value(value, column_type, "smart", max_length)
     if norm is None:
         return ""

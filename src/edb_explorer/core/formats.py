@@ -65,17 +65,19 @@ class RowWriter(ABC):
         return ["_row", *self.columns] if self.with_row_index else list(self.columns)
 
     def _text_row(self, row: dict[str, Any], max_len: int = 1_000_000) -> list[str]:
-        cells = [display_value(row.get(c), self.types.get(c), max_len) for c in self.columns]
+        get, types_get = row.get, self.types.get
+        cells = ["" if (v := get(c)) is None else display_value(v, types_get(c), max_len) for c in self.columns]
         return [str(row.get("_row", "")), *cells] if self.with_row_index else cells
 
     def _json_row(self, row: dict[str, Any]) -> dict[str, Any]:
         obj: dict[str, Any] = {}
         if self.with_row_index and "_row" in row:
             obj["_row"] = row["_row"]
+        get, types_get, bytes_mode = row.get, self.types.get, self.bytes_mode
         for c in self.columns:
-            v = row.get(c)
+            v = get(c)
             if v is not None:
-                obj[c] = normalize_value(v, self.types.get(c), self.bytes_mode)
+                obj[c] = normalize_value(v, types_get(c), bytes_mode)
         return obj
 
     @abstractmethod
@@ -198,7 +200,8 @@ class XlsxWriter(RowWriter):
         return _XLSX_ILLEGAL.sub("", text)[:XLSX_CELL_LIMIT]
 
     def write(self, row: dict[str, Any]) -> None:
-        cells = [self._cell(row.get(c), self.types.get(c)) for c in self.columns]
+        get, types_get, cell = row.get, self.types.get, self._cell
+        cells = [None if (v := get(c)) is None else cell(v, types_get(c)) for c in self.columns]
         if self.with_row_index:
             cells.insert(0, row.get("_row"))
         self._ws.append(cells)

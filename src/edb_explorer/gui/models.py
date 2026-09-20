@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+from array import array
+from bisect import bisect_left
 from datetime import datetime
 from typing import Any
 
@@ -38,7 +40,12 @@ _NUMERIC_TYPES = frozenset(
 
 
 class RecordTableModel(QAbstractTableModel):
-    """Holds the decoded rows of one table.  Rows are appended in batches by :class:`RecordLoader`."""
+    """Holds the decoded rows of one table.  Rows are appended in batches by :class:`RecordLoader`.
+
+    Rows stay as the sparse dicts the loader produces (wide ESE tables have thousands of columns of which a
+    handful are set per row).  Display strings are only cached for values that are expensive to render
+    (blobs, timestamps, lists, long text); numbers and plain strings are rendered on the fly.
+    """
 
     def __init__(self, columns: tuple[ColumnInfo, ...], parent: Any = None) -> None:
         super().__init__(parent)
@@ -46,11 +53,16 @@ class RecordTableModel(QAbstractTableModel):
         self.column_names = [c.name for c in self.columns]
         self.column_types = {c.name: c.type for c in self.columns}
         self._col_index = {c.name: i for i, c in enumerate(self.columns)}
+        # numbers in these columns display as str(value): no decoding, so nothing worth caching
+        self._plain_number = [c.type != "DateTime" and not c.type.startswith("ts:") for c in self.columns]
         self._rows: list[dict[str, Any]] = []
-        self._indices: list[int] = []
-        self._display: list[dict[int, str]] = []
-        self._index_to_row: dict[int, int] = {}
+        self._indices = array("q")
+        self._display: list[dict[int, str] | None] = []
+        # Row indices arrive in increasing order (storage order), so lookups can bisect; a dict is only
+        # built if a caller ever appends out-of-order indices.
+        self._index_to_row: dict[int, int] | None = None
         self.seen_columns: set[int] = set()
+        self.seen_sorted: tuple[int, ...] = ()
         self._dim = QColor("#8a9099")
 
     # ---- Qt API ------------------------------------------------------- #
@@ -101,12 +113,23 @@ class RecordTableModel(QAbstractTableModel):
     # ---- helpers ------------------------------------------------------ #
     def display_text(self, r: int, c: int) -> str:
         cache = self._display[r]
-        text = cache.get(c)
-        if text is None:
-            name = self.column_names[c]
-            val = self._rows[r].get(name)
-            text = "" if val is None else display_value(val, self.column_types.get(name), 300)
-            cache[c] = text
+        if cache is not None:
+            text = cache.get(c)
+            if text is not None:
+                return text
+        name = self.column_names[c]
+        val = self._rows[r].get(name)
+        if val is None:
+            return ""
+        if type(val) is str:
+            if len(val) <= 300 and "\r" not in val and "\n" not in val:
+                return val  # exactly what display_value would return
+        elif self._plain_number[c] and isinstance(val, int | float):
+            return str(val)
+        text = display_value(val, self.column_types.get(name), 300)
+        if cache is None:
+            cache = self._display[r] = {}
+        cache[c] = text
         return text
 
     def append_rows(self, indices: list[int], rows: list[dict[str, Any]]) -> set[int]:
@@ -115,28 +138,41 @@ class RecordTableModel(QAbstractTableModel):
             return set()
         first = len(self._rows)
         new_cols: set[int] = set()
-        for name_set in (row.keys() for row in rows):
-            for name in name_set:
-                ci = self._col_index.get(name)
-                if ci is not None and ci not in self.seen_columns:
-                    self.seen_columns.add(ci)
+        col_index = self._col_index
+        seen = self.seen_columns
+        for row in rows:
+            for name in row:
+                ci = col_index.get(name)
+                if ci is not None and ci not in seen:
+                    seen.add(ci)
                     new_cols.add(ci)
+        if new_cols:
+            self.seen_sorted = tuple(sorted(seen))
+        if self._index_to_row is None:
+            last = self._indices[-1] if self._indices else -1
+            for idx in indices:
+                if idx <= last:
+                    self._index_to_row = {i: pos for pos, i in enumerate(self._indices)}
+                    break
+                last = idx
         self.beginInsertRows(QModelIndex(), first, first + len(rows) - 1)
         self._rows.extend(rows)
         self._indices.extend(indices)
-        self._display.extend({} for _ in rows)
-        for offset, idx in enumerate(indices):
-            self._index_to_row[idx] = first + offset
+        self._display.extend([None] * len(rows))
+        if self._index_to_row is not None:
+            for offset, idx in enumerate(indices):
+                self._index_to_row[idx] = first + offset
         self.endInsertRows()
         return new_cols
 
     def clear(self) -> None:
         self.beginResetModel()
         self._rows.clear()
-        self._indices.clear()
+        del self._indices[:]
         self._display.clear()
-        self._index_to_row.clear()
+        self._index_to_row = None
         self.seen_columns.clear()
+        self.seen_sorted = ()
         self.endResetModel()
 
     def raw_row(self, r: int) -> dict[str, Any]:
@@ -146,7 +182,10 @@ class RecordTableModel(QAbstractTableModel):
         return self._indices[r]
 
     def model_row_for_index(self, table_index: int) -> int | None:
-        return self._index_to_row.get(table_index)
+        if self._index_to_row is not None:
+            return self._index_to_row.get(table_index)
+        i = bisect_left(self._indices, table_index)
+        return i if i < len(self._indices) and self._indices[i] == table_index else None
 
     def column_position(self, name: str) -> int | None:
         return self._col_index.get(name)
@@ -158,6 +197,7 @@ class RecordFilterProxy(QSortFilterProxyModel):
     def __init__(self, parent: Any = None) -> None:
         super().__init__(parent)
         self._text = ""
+        self._needle = ""
         self._regex: re.Pattern[str] | None = None
         self._case = False
         self._column_only: int | None = None
@@ -167,6 +207,7 @@ class RecordFilterProxy(QSortFilterProxyModel):
         self, text: str, regex: bool = False, case_sensitive: bool = False, column: int | None = None
     ) -> None:
         self._text = text
+        self._needle = text if case_sensitive else text.lower()
         self._case = case_sensitive
         self._column_only = column
         self._regex = None
@@ -181,16 +222,16 @@ class RecordFilterProxy(QSortFilterProxyModel):
         if not self._text:
             return True
         model: RecordTableModel = self.sourceModel()  # type: ignore[assignment]
-        cols = [self._column_only] if self._column_only is not None else sorted(model.seen_columns)
-        needle = self._text if self._case else self._text.lower()
+        cols = (self._column_only,) if self._column_only is not None else model.seen_sorted
+        needle, regex, case, display = self._needle, self._regex, self._case, model.display_text
         for c in cols:
-            text = model.display_text(source_row, c)
+            text = display(source_row, c)
             if not text:
                 continue
-            if self._regex is not None:
-                if self._regex.search(text):
+            if regex is not None:
+                if regex.search(text):
                     return True
-            elif (needle in text) if self._case else (needle in text.lower()):
+            elif (needle in text) if case else (needle in text.lower()):
                 return True
         return False
 

@@ -31,6 +31,8 @@ _LOG_FULL, _LOG_FIRST, _LOG_MIDDLE, _LOG_LAST = 1, 2, 3, 4
 _TYPE_DELETE, _TYPE_VALUE = 0, 1
 
 _COLS = ("file", "sequence", "operation", "key", "value", "key_text", "value_text", "key_hex")
+_PRINTABLE = bytes(range(32, 127))
+_PRINTABLE_WS = _PRINTABLE + b"\t\n\r"
 
 
 @dataclass(slots=True)
@@ -100,7 +102,7 @@ def decode_key(key: bytes) -> str:
         if rest[:1] in (b"\x00", b"\x01"):
             rest = rest[1:]
         return f"{origin.decode('utf-8', 'replace')} :: {decode_bytes(rest) if rest else ''}"
-    if key and all(32 <= b < 127 for b in key):
+    if key and not key.translate(None, _PRINTABLE):  # every byte printable ASCII
         return key.decode("ascii")
     return str(decode_bytes(key))
 
@@ -117,7 +119,7 @@ def decode_value(value: bytes) -> str:
             return value[1:].decode("latin-1")
         except UnicodeDecodeError:
             pass
-    if value and all(32 <= b < 127 or b in (9, 10, 13) for b in value):
+    if value and not value.translate(None, _PRINTABLE_WS):  # printable ASCII plus tab / newline
         return value.decode("ascii")
     return str(decode_bytes(value, max_length=4096))
 
@@ -242,9 +244,11 @@ class LevelDbBackend(Backend):
             key=lambda p: (p.suffix != ".ldb", p.name),
         )
         self._records: list[LdbRecord] | None = None
+        self._live: list[LdbRecord] | None = None  # latest non-deleted record per key, key order
 
     def close(self) -> None:
         self._records = None
+        self._live = None
 
     def _load(self) -> list[LdbRecord]:
         if self._records is None:
@@ -319,13 +323,13 @@ class LevelDbBackend(Backend):
             for r in records:
                 yield r.as_dict()
             return
-        latest: dict[bytes, LdbRecord] = {}
-        for r in records:  # sorted by sequence -> last wins
-            latest[r.key] = r
-        for key in sorted(latest):
-            r = latest[key]
-            if not r.deleted:
-                yield r.as_dict()
+        if self._live is None:
+            latest: dict[bytes, LdbRecord] = {}
+            for r in records:  # sorted by sequence -> last wins
+                latest[r.key] = r
+            self._live = [latest[key] for key in sorted(latest) if not latest[key].deleted]
+        for r in self._live:
+            yield r.as_dict()
 
     def count(self, table: str) -> int | None:
         if table == "all_records":
