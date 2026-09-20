@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-20
+
 ### Added
 - **Theme switcher**: View ▸ Theme offers *Light*, *Dark* and *Follow system* (tracks OS colour-scheme changes
   while running); a sun / moon toggle at the right end of the toolbar (`Ctrl+Shift+D`) flips between the two.

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "edb-explorer"
-version = "0.3.1"
+version = "0.4.0"
 description = "Cross-platform GUI, CLI and MCP server for forensic database analysis: ESE (ntds.dit, SRUDB, Exchange), SQLite (iOS/Android/browsers/macOS/Windows apps), LevelDB, Access, DBF, Berkeley DB and SQL/BSON dumps - with SQL, timelines and reports."
 readme = "README.md"
 license = { file = "LICENSE" }
