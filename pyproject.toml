@@ -1,0 +1,119 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "edb-explorer"
+version = "0.1.0"
+description = "Cross-platform GUI, CLI and MCP server for exploring Microsoft ESE (Extensible Storage Engine) databases - .edb, .dit, .dat - for digital forensics."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+authors = [{ name = "Keyur Aghao" }]
+keywords = [
+  "ese", "esedb", "edb", "ntds", "srum", "srudb", "exchange", "webcache",
+  "forensics", "dfir", "mcp", "model-context-protocol", "pyside6",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Environment :: X11 Applications :: Qt",
+  "Environment :: Win32 (MS Windows)",
+  "Intended Audience :: Information Technology",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: MacOS",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Security",
+  "Topic :: System :: Recovery Tools",
+  "Topic :: Database",
+]
+dependencies = [
+  "dissect.esedb>=3.15",
+  "typer>=0.12",
+  "rich>=13.7",
+  "openpyxl>=3.1",
+  "reportlab>=4.0",
+  "python-docx>=1.1",
+]
+
+[project.optional-dependencies]
+gui = ["PySide6>=6.6"]
+mcp = ["mcp>=1.6"]
+all = ["edb-explorer[gui,mcp]"]
+dev = [
+  "edb-explorer[all]",
+  "pytest>=8.0",
+  "pytest-cov>=5.0",
+  "ruff>=0.5",
+  "mypy>=1.10",
+  "pyinstaller>=6.6",
+  "build>=1.2",
+]
+
+[project.urls]
+Homepage = "https://github.com/keyuraghao/edb-explorer"
+Repository = "https://github.com/keyuraghao/edb-explorer"
+Issues = "https://github.com/keyuraghao/edb-explorer/issues"
+Changelog = "https://github.com/keyuraghao/edb-explorer/blob/main/CHANGELOG.md"
+
+[project.scripts]
+edb-explorer = "edb_explorer.cli:main"
+edb-explorer-mcp = "edb_explorer.mcp.server:main"
+
+[project.gui-scripts]
+edb-explorer-gui = "edb_explorer.gui.app:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/edb_explorer"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "tests", "README.md", "LICENSE", "CHANGELOG.md", "packaging"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "RUF", "PL"]
+ignore = [
+  "PLR0913",  # many arguments - MCP tools and Qt widgets legitimately take many
+  "PLR2004",  # magic values
+  "PLR0912", "PLR0915", "PLR0911",  # complexity - GUI code
+  "RUF012",   # mutable class attrs (Qt patterns)
+  "PLR0917", "PLR0914", "PLR0904", "PLR1702", "PLR6301", "PLC0415", "PLW2901",  # style-only
+  "SIM105",   # try/except/pass is clearer than contextlib.suppress in header parsing
+  "RUF001", "RUF002", "RUF003",  # unicode punctuation in UI strings is intentional
+  "PLW0108",  # lambdas as Qt slots are clearer than partial
+  "N802", "N815",  # Qt camelCase overrides
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["PLR", "S101", "E501"]
+"src/edb_explorer/core/report.py" = ["E501", "N806"]  # long HTML/markup template strings
+"src/edb_explorer/core/formats.py" = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_unused_ignores = true
+ignore_missing_imports = true
+check_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -q"
+markers = ["integration: requires a real ESE database (set EDB_EXPLORER_TEST_DB)"]
+
+[tool.coverage.run]
+source = ["edb_explorer"]
+omit = ["*/gui/*"]
+
+[tool.uv]
+package = true
