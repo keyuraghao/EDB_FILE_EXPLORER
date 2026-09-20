@@ -25,7 +25,7 @@
 </p>
 <p align="center">
   <img src="docs/screenshots/analysis-view.png" width="440" alt="SRUM network usage view">
-  <img src="docs/screenshots/agents.png" width="440" alt="Claude Code running inside EDB Explorer">
+  <img src="docs/screenshots/timeline.png" width="440" alt="Cross-database timeline">
 </p>
 
 ---
@@ -174,7 +174,7 @@ edb-explorer dump SRUDB.dat SruDbIdMapTable -n 20 -g svchost -f jsonl
 edb-explorer search WebCacheV01.dat "login.microsoftonline.com" --regex
 edb-explorer export ntds.dit -o out/ -f xlsx           # whole database -> out/ntds.xlsx
 edb-explorer export SRUDB.dat -t "Network Data Usage" -o net.pdf -f pdf
-edb-explorer report SRUDB.dat ntds.dit -o case.docx --case CASE-2026-001 --analyst "K. Aghao"
+edb-explorer report SRUDB.dat ntds.dit -o case.docx --case CASE-2026-001 --analyst "J. Doe"
 edb-explorer scan /mnt/evidence                        # every supported database, by signature
 edb-explorer sql sms.db "SELECT COUNT(*) FROM message WHERE is_from_me = 1"
 edb-explorer views History                             # list artifact views for this database type

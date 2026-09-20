@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- README screenshots regenerated from a neutral evidence tree (no user names, home directories or case
+  identifiers); the embedded-agent screenshot was dropped.
+
 ## [0.4.0] - 2026-09-20
 
 ### Added

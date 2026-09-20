@@ -73,7 +73,7 @@ def leveldb_dir(tmp_path: Path) -> Path:
     batch += b"\x01" + _varint(2) + b"k1" + _varint(2) + b"v1"
     batch += b"\x00" + _varint(2) + b"k2"
     key = b"_https://example.com\x00\x01name"
-    val = b"\x00" + "Keyur".encode("utf-16-le")
+    val = b"\x00" + "alice".encode("utf-16-le")
     batch += b"\x01" + _varint(len(key)) + key + _varint(len(val)) + val
     # one FULL record plus one FIRST/LAST split record spanning a block boundary
     rec = struct.pack("<IHB", 0, len(batch), 1) + batch
@@ -249,7 +249,7 @@ def test_leveldb_records(leveldb_dir: Path) -> None:
         ops = [(r["sequence"], r["operation"], r["key_text"]) for r in all_rows]
         assert ops[:2] == [(1, "put", "k1"), (2, "put", "k9")]
         assert (6, "delete", "k2") in ops
-        assert any(r["key_text"] == "https://example.com :: name" and r["value_text"] == "Keyur" for r in all_rows)
+        assert any(r["key_text"] == "https://example.com :: name" and r["value_text"] == "alice" for r in all_rows)
         big = next(r for r in all_rows if r["key_text"] == "big")
         assert len(big["value"]) == LOG_BLOCK_SIZE + 100  # split record reassembled
         live = {r["key_text"]: r["value_text"] for r in db.fetch("live", limit=50).rows}
