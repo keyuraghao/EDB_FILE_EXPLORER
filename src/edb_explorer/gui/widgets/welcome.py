@@ -18,13 +18,13 @@ from PySide6.QtWidgets import (
 )
 
 from edb_explorer import __app_name__, __version__
-from edb_explorer.gui.icons import std
+from edb_explorer.gui.icons import icon
 
 
 class _BigButton(QPushButton):
     """A large clickable card: icon on top, bold title, dim subtitle."""
 
-    def __init__(self, title: str, subtitle: str, icon: str) -> None:
+    def __init__(self, title: str, subtitle: str, glyph: str) -> None:
         super().__init__()
         self.setMinimumSize(240, 150)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -39,7 +39,7 @@ class _BigButton(QPushButton):
         layout.setContentsMargins(12, 14, 12, 14)
         layout.setSpacing(6)
         icon_label = QLabel()
-        icon_label.setPixmap(std(icon).pixmap(40, 40))
+        icon_label.setPixmap(icon(glyph).pixmap(40, 40))
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title_label = QLabel(title)
         tf = QFont()
@@ -85,9 +85,9 @@ class WelcomePage(QWidget):
 
         row = QHBoxLayout()
         row.setSpacing(18)
-        self.btn_open = _BigButton("Open files", "Import one or more database files", "SP_DialogOpenButton")
-        self.btn_recent = _BigButton("Open recent", "Pick from recently opened files", "SP_FileDialogDetailedView")
-        self.btn_scan = _BigButton("Scan folder", "Find every database in a folder or image", "SP_DirOpenIcon")
+        self.btn_open = _BigButton("Open files", "Import one or more database files", "open")
+        self.btn_recent = _BigButton("Open recent", "Pick from recently opened files", "history")
+        self.btn_scan = _BigButton("Scan folder", "Find every database in a folder or image", "scan")
         self.btn_open.clicked.connect(self.open_files)
         self.btn_recent.clicked.connect(self._toggle_recent)
         self.btn_scan.clicked.connect(self.scan_folder)

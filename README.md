@@ -58,6 +58,8 @@ Everything is **strictly read-only** - the tool never writes to an evidence file
 - Open many databases at once (`Ctrl+O`), drag-and-drop files or folders, welcome screen with **Open / Recent / Scan**
   buttons, a **Tasks** panel showing a progress bar for every file being opened or table being loaded while you keep
   working, collapse / expand all databases with one click.
+- **Light and dark themes** (View ▸ Theme: Light / Dark / Follow system, or the sun / moon button at the right of the
+  toolbar, `Ctrl+Shift+D`); every toolbar action has its own icon.
 
 **Application knowledge** (see [docs/formats.md](docs/formats.md))
 - 52 profiles: NTDS, SRUM, Exchange, WebCache, Windows Search, UAL, Windows Timeline, Notifications, Chrome/Edge
@@ -159,6 +161,7 @@ edb-explorer gui SRUDB.dat sms.db "Local Storage/leveldb" places.sqlite
 | `Ctrl+E` / `Ctrl+Shift+E` | extract table or view / extract selected rows |
 | `Ctrl+R` | generate report |
 | `Ctrl+T` | timestamp decoder |
+| `Ctrl+Shift+D` | toggle light / dark theme |
 | `Ctrl+W` / `Ctrl+Shift+W` | close tab / close database |
 
 ### CLI

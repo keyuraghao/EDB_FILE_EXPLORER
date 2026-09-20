@@ -7,7 +7,15 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QByteArray, QSettings, Qt, QTimer, QUrl
-from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QDragEnterEvent, QDropEvent, QKeySequence
+from PySide6.QtGui import (
+    QAction,
+    QActionGroup,
+    QCloseEvent,
+    QDesktopServices,
+    QDragEnterEvent,
+    QDropEvent,
+    QKeySequence,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QDockWidget,
@@ -15,6 +23,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QSizePolicy,
     QTabWidget,
     QWidget,
 )
@@ -24,9 +33,9 @@ from edb_explorer.core import EdbDatabase, Session
 from edb_explorer.core.backends import KINDS
 from edb_explorer.core.session import ESE_EXTENSIONS
 from edb_explorer.core.sqlworkspace import SqlWorkspace
-from edb_explorer.gui.icons import app_icon, std
+from edb_explorer.gui.icons import app_icon, icon
 from edb_explorer.gui.tasks import TaskManager, TaskPanel
-from edb_explorer.gui.theme import apply_theme, current_theme
+from edb_explorer.gui.theme import THEMES, apply_theme, current_theme, theme_preference
 from edb_explorer.gui.widgets.agents_tab import AgentsTab
 from edb_explorer.gui.widgets.database_tree import DatabaseTree
 from edb_explorer.gui.widgets.dialogs import (
@@ -151,19 +160,14 @@ class MainWindow(QMainWindow):
     def _build_menus(self) -> None:
         mb = self.menuBar()
         file_menu = mb.addMenu("&File")
-        self._act(
-            file_menu,
-            "&Open database(s)…",
-            self.open_files_dialog,
-            QKeySequence.StandardKey.Open,
-            "SP_DialogOpenButton",
-        )
-        self._act(file_menu, "Open &folder (scan)…", self.open_folder_dialog, "Ctrl+Shift+O", "SP_DirOpenIcon")
+        self._act(file_menu, "&Open database(s)…", self.open_files_dialog, QKeySequence.StandardKey.Open, "open")
+        self._act(file_menu, "Open &folder (scan)…", self.open_folder_dialog, "Ctrl+Shift+O", "scan")
         self.recent_menu = file_menu.addMenu("Open &recent")
+        self.recent_menu.setIcon(icon("history"))
         file_menu.addSeparator()
-        self._act(file_menu, "&Extract / export…", self.export_current, "Ctrl+E", "SP_DialogSaveButton")
-        self._act(file_menu, "Extract &selected rows…", self.extract_selection, "Ctrl+Shift+E")
-        self._act(file_menu, "Generate &report…", self.show_report, "Ctrl+R", "SP_FileDialogDetailedView")
+        self._act(file_menu, "&Extract / export…", self.export_current, "Ctrl+E", "extract")
+        self._act(file_menu, "Extract &selected rows…", self.extract_selection, "Ctrl+Shift+E", "rows")
+        self._act(file_menu, "Generate &report…", self.show_report, "Ctrl+R", "report")
         file_menu.addSeparator()
         self._act(
             file_menu, "Close &tab", lambda: self._close_tab(self.tabs.currentIndex()), QKeySequence.StandardKey.Close
@@ -179,30 +183,42 @@ class MainWindow(QMainWindow):
         view.addAction(self.dock_inspector.toggleViewAction())
         view.addAction(self.dock_tasks.toggleViewAction())
         view.addSeparator()
-        self._act(view, "Collapse all databases", lambda: self.tree.collapse_all(), "Ctrl+Shift+-")
-        self._act(view, "Expand all databases", lambda: self.tree.expand_all(), "Ctrl+Shift+=")
+        self._act(view, "Collapse all databases", lambda: self.tree.collapse_all(), "Ctrl+Shift+-", "collapse")
+        self._act(view, "Expand all databases", lambda: self.tree.expand_all(), "Ctrl+Shift+=", "expand")
         view.addSeparator()
-        self.theme_action = self._act(view, "&Dark theme", self._toggle_theme, "Ctrl+Shift+D")
-        self.theme_action.setCheckable(True)
-        self.theme_action.setChecked(current_theme(QApplication.instance()) == "dark")  # type: ignore[arg-type]
+        theme_menu = view.addMenu("&Theme")
+        self._theme_group = QActionGroup(self)
+        self._theme_actions: dict[str, QAction] = {}
+        for pref, label, glyph in (
+            ("light", "&Light", "sun"),
+            ("dark", "&Dark", "moon"),
+            ("system", "Follow &system", None),
+        ):
+            act = QAction(label, self)
+            act.setCheckable(True)
+            if glyph:
+                act.setIcon(icon(glyph))
+            act.triggered.connect(lambda _c=False, p=pref: self.set_theme(p))
+            self._theme_group.addAction(act)
+            theme_menu.addAction(act)
+            self._theme_actions[pref] = act
+        self.theme_toggle = self._act(view, "Toggle light / dark", self._toggle_theme, "Ctrl+Shift+D")
         self._act(view, "Reset &layout", self._reset_layout)
 
         analysis = mb.addMenu("&Analysis")
-        self._act(analysis, "&SQL console", self.show_sql, "Ctrl+Q", "SP_ComputerIcon")
-        self._act(analysis, "&Timeline", self.show_timeline, "Ctrl+L", "SP_FileDialogListView")
-        self._act(analysis, "Column &statistics for current table…", self.show_stats, "Ctrl+I")
-        self._act(analysis, "Exchange &mailbox viewer", lambda: self.show_mailboxes(None), "Ctrl+M", "SP_DirHomeIcon")
+        self._act(analysis, "&SQL console", self.show_sql, "Ctrl+Q", "sql")
+        self._act(analysis, "&Timeline", self.show_timeline, "Ctrl+L", "timeline")
+        self._act(analysis, "Column &statistics for current table…", self.show_stats, "Ctrl+I", "stats")
+        self._act(analysis, "Exchange &mailbox viewer", lambda: self.show_mailboxes(None), "Ctrl+M", "mailbox")
         analysis.addSeparator()
-        self._act(
-            analysis, "&AI agents (Claude Code, Codex, Gemini…)", self.show_agents, "Ctrl+Shift+A", "SP_ComputerIcon"
-        )
+        self._act(analysis, "&AI agents (Claude Code, Codex, Gemini…)", self.show_agents, "Ctrl+Shift+A", "agents")
         self.views_menu = analysis.addMenu("Artifact &views")
         self.views_menu.aboutToShow.connect(self._fill_views_menu)
 
         tools = mb.addMenu("&Tools")
-        self._act(tools, "&Find in database(s)…", self.show_search, "Ctrl+Shift+F", "SP_FileDialogContentsView")
-        self._act(tools, "Filter &rows in current table", self._focus_filter, QKeySequence.StandardKey.Find)
-        self._act(tools, "&Timestamp decoder…", lambda: self.show_timestamp(None), "Ctrl+T")
+        self._act(tools, "&Find in database(s)…", self.show_search, "Ctrl+Shift+F", "search")
+        self._act(tools, "Filter &rows in current table", self._focus_filter, QKeySequence.StandardKey.Find, "filter")
+        self._act(tools, "&Timestamp decoder…", lambda: self.show_timestamp(None), "Ctrl+T", "clock")
         self._act(tools, "&Count records in all tables", lambda: self._count_all(self._current_db_id()))
         tools.addSeparator()
         self._act(tools, "Set &row limit…", self._set_row_limit)
@@ -220,19 +236,37 @@ class MainWindow(QMainWindow):
         tb = self.addToolBar("Main")
         tb.setObjectName("toolbar_main")
         tb.setMovable(False)
-        tb.addAction(self._act(None, "Open", self.open_files_dialog, None, "SP_DialogOpenButton"))
-        tb.addAction(self._act(None, "Scan folder", self.open_folder_dialog, None, "SP_DirOpenIcon"))
-        tb.addAction(self._act(None, "Search", self.show_search, None, "SP_FileDialogContentsView"))
-        tb.addAction(self._act(None, "SQL", self.show_sql, None, "SP_ComputerIcon"))
-        tb.addAction(self._act(None, "Timeline", self.show_timeline, None, "SP_FileDialogListView"))
-        tb.addAction(self._act(None, "AI agents", self.show_agents, None, "SP_ComputerIcon"))
-        tb.addAction(self._act(None, "Extract", self.export_current, None, "SP_DialogSaveButton"))
-        tb.addAction(self._act(None, "Report", self.show_report, None, "SP_FileDialogDetailedView"))
+        tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        for text, slot, glyph, tip in (
+            ("Open", self.open_files_dialog, "open", "Open database file(s)  (Ctrl+O)"),
+            ("Scan", self.open_folder_dialog, "scan", "Scan a folder or mounted image for databases  (Ctrl+Shift+O)"),
+            (
+                "Search",
+                self.show_search,
+                "search",
+                "Find text across every table of the open databases  (Ctrl+Shift+F)",
+            ),
+            ("SQL", self.show_sql, "sql", "SQL console over any format  (Ctrl+Q)"),
+            ("Timeline", self.show_timeline, "timeline", "Timeline of every timestamp column  (Ctrl+L)"),
+            ("Mail", lambda: self.show_mailboxes(None), "mailbox", "Exchange mailbox viewer  (Ctrl+M)"),
+            ("Agents", self.show_agents, "agents", "AI agents: Claude Code, Codex, Gemini…  (Ctrl+Shift+A)"),
+            ("Extract", self.export_current, "extract", "Extract / export the current table or results  (Ctrl+E)"),
+            ("Report", self.show_report, "report", "Generate a report  (Ctrl+R)"),
+        ):
+            act = self._act(None, text, slot, None, glyph)
+            act.setToolTip(tip)
+            tb.addAction(act)
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        tb.addWidget(spacer)
+        self.theme_button = self._act(None, "Theme", self._toggle_theme, None)
+        tb.addAction(self.theme_button)
+        self._sync_theme_ui()
 
-    def _act(self, menu: QMenu | None, text: str, slot: Any, shortcut: Any = None, icon: str | None = None) -> QAction:
+    def _act(self, menu: QMenu | None, text: str, slot: Any, shortcut: Any = None, glyph: str | None = None) -> QAction:
         act = QAction(text, self)
-        if icon:
-            act.setIcon(std(icon))
+        if glyph:
+            act.setIcon(icon(glyph))
         if shortcut:
             act.setShortcut(QKeySequence(shortcut) if isinstance(shortcut, str) else shortcut)
         act.triggered.connect(slot)
@@ -706,10 +740,32 @@ class MainWindow(QMainWindow):
             self.max_rows = value
             self.settings.setValue("max_rows", value)
 
-    def _toggle_theme(self, checked: bool) -> None:
-        name = "dark" if checked else "light"
-        apply_theme(QApplication.instance(), name)  # type: ignore[arg-type]
-        self.settings.setValue("theme", name)
+    def set_theme(self, preference: str) -> None:
+        """Switch to ``light``, ``dark`` or ``system`` and remember it."""
+        if preference not in THEMES:
+            preference = "dark"
+        apply_theme(QApplication.instance(), preference)  # type: ignore[arg-type]
+        self.settings.setValue("theme", preference)
+        self._sync_theme_ui()
+
+    def _toggle_theme(self) -> None:
+        app = QApplication.instance()
+        self.set_theme("light" if current_theme(app) == "dark" else "dark")  # type: ignore[arg-type]
+
+    def _sync_theme_ui(self) -> None:
+        app = QApplication.instance()
+        shown, pref = current_theme(app), theme_preference(app)  # type: ignore[arg-type]
+        for name, act in self._theme_actions.items():
+            act.setChecked(name == pref)
+        # the toggle shows what you will get when you click it
+        glyph, other = ("sun", "light") if shown == "dark" else ("moon", "dark")
+        for act in (self.theme_button, self.theme_toggle):
+            act.setIcon(icon(glyph))
+        self.theme_button.setText(other.capitalize())
+        self.theme_button.setToolTip(
+            f"Switch to the {other} theme  (Ctrl+Shift+D)"
+            + ("  · currently following the system" if pref == "system" else "")
+        )
 
     def _reset_layout(self) -> None:
         for d in (self.dock_tree, self.dock_info, self.dock_inspector):

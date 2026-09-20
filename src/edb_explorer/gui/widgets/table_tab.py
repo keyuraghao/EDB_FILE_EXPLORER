@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 
 from edb_explorer.core import EdbDatabase, TableInfo
 from edb_explorer.core.values import display_value
-from edb_explorer.gui.icons import std
+from edb_explorer.gui.icons import icon
 from edb_explorer.gui.models import RAW_ROLE, RecordFilterProxy, RecordTableModel
 from edb_explorer.gui.workers import RecordLoader
 
@@ -102,13 +102,13 @@ class TableTab(QWidget):
         bar.addWidget(self.columns_btn)
 
         self.stop_btn = QToolButton()
-        self.stop_btn.setIcon(std("SP_BrowserStop"))
+        self.stop_btn.setIcon(icon("stop"))
         self.stop_btn.setToolTip("Stop loading")
         self.stop_btn.clicked.connect(self.stop)
         bar.addWidget(self.stop_btn)
 
         self.reload_btn = QToolButton()
-        self.reload_btn.setIcon(std("SP_BrowserReload"))
+        self.reload_btn.setIcon(icon("reload"))
         self.reload_btn.setToolTip("Reload table")
         self.reload_btn.clicked.connect(self.reload)
         bar.addWidget(self.reload_btn)

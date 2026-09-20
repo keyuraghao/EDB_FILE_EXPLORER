@@ -8,7 +8,7 @@ from PySide6.QtCore import QModelIndex, QPoint, QSortFilterProxyModel, Qt, Signa
 from PySide6.QtWidgets import QHBoxLayout, QHeaderView, QLineEdit, QMenu, QToolButton, QTreeView, QVBoxLayout, QWidget
 
 from edb_explorer.core import EdbDatabase
-from edb_explorer.gui.icons import kind_icon, std
+from edb_explorer.gui.icons import icon, kind_icon
 from edb_explorer.gui.models import DB_ID_ROLE, KIND_ROLE, TABLE_ROLE, VIEW_ROLE, DatabaseTreeModel
 
 
@@ -35,13 +35,13 @@ class DatabaseTree(QWidget):
         self.filter.setClearButtonEnabled(True)
         top.addWidget(self.filter, 1)
         self.collapse_btn = QToolButton()
-        self.collapse_btn.setIcon(std("SP_TitleBarShadeButton"))
+        self.collapse_btn.setIcon(icon("collapse"))
         self.collapse_btn.setToolTip("Collapse all databases")
         self.collapse_btn.setAutoRaise(True)
         self.collapse_btn.clicked.connect(self.collapse_all)
         top.addWidget(self.collapse_btn)
         self.expand_btn = QToolButton()
-        self.expand_btn.setIcon(std("SP_TitleBarUnshadeButton"))
+        self.expand_btn.setIcon(icon("expand"))
         self.expand_btn.setToolTip("Expand all databases")
         self.expand_btn.setAutoRaise(True)
         self.expand_btn.clicked.connect(self.expand_all)

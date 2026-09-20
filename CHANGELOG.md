@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Theme switcher**: View ▸ Theme offers *Light*, *Dark* and *Follow system* (tracks OS colour-scheme changes
+  while running); a sun / moon toggle at the right end of the toolbar (`Ctrl+Shift+D`) flips between the two.
+- **Purpose-specific icons**: a painted icon set (no image assets) with a distinct glyph and colour per action -
+  Open, Scan, Search, SQL, Timeline, Mail, Agents, Extract, Report, plus theme, statistics, timestamp decoder,
+  filter, run / stop / reload / cancel and the welcome cards - replacing the stock Qt pixmaps that were shared
+  between unrelated actions. Toolbar buttons now show labels under their icons; the Exchange mailbox viewer has
+  a toolbar button.
+
 ## [0.3.1] - 2026-09-20
 
 ### Changed

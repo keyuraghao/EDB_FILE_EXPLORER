@@ -44,7 +44,7 @@ from edb_explorer.core.exchange.export import (
     summaries_to_rows,
 )
 from edb_explorer.core.export import EXPORT_FORMATS, export_rows
-from edb_explorer.gui.icons import kind_icon, std
+from edb_explorer.gui.icons import icon, kind_icon, std
 from edb_explorer.gui.tasks import TaskManager
 from edb_explorer.gui.widgets.query_tab import ResultsGrid
 from edb_explorer.gui.workers import FunctionWorker
@@ -115,7 +115,7 @@ class MailboxTab(QWidget):
         bar.addWidget(self.whole_mailbox)
         self.export_btn = QToolButton()
         self.export_btn.setText("Export ▾")
-        self.export_btn.setIcon(std("SP_DialogSaveButton"))
+        self.export_btn.setIcon(icon("extract"))
         self.export_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.export_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.export_menu = QMenu(self)

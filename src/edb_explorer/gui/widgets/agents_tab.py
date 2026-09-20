@@ -33,7 +33,7 @@ from edb_explorer.core.agents import (
     find_executable,
     mcp_config_snippet,
 )
-from edb_explorer.gui.icons import std
+from edb_explorer.gui.icons import icon
 from edb_explorer.gui.terminal import TerminalWidget, terminal_available
 
 
@@ -71,7 +71,7 @@ class AgentsTab(QWidget):
         self.login_btn.clicked.connect(self.login)
         bar.addWidget(self.login_btn)
         self.start_btn = QPushButton("Start agent")
-        self.start_btn.setIcon(std("SP_MediaPlay"))
+        self.start_btn.setIcon(icon("play"))
         self.start_btn.clicked.connect(self.start_agent)
         bar.addWidget(self.start_btn)
         self.shell_btn = QPushButton("Shell")

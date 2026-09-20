@@ -97,3 +97,29 @@ def test_filter_proxy(app: QApplication) -> None:
     assert proxy.rowCount() == 1
     proxy.set_filter("")
     assert proxy.rowCount() == 4
+
+
+def test_action_icons_are_distinct_and_non_empty(app: QApplication) -> None:
+    from edb_explorer.gui.icons import ICON_NAMES, icon, render_glyph
+
+    seen: dict[bytes, str] = {}
+    for name in ICON_NAMES:
+        pm = render_glyph(name, 24)
+        img = pm.toImage()
+        raw = bytes(img.constBits())
+        assert any(raw), name  # something was painted
+        assert raw not in seen, (name, seen.get(raw))  # no two actions share a glyph
+        seen[raw] = name
+        assert not icon(name).isNull() and icon(name) is icon(name)  # cached
+    assert icon("no-such-glyph").isNull()
+
+
+def test_theme_switching(app: QApplication) -> None:
+    from edb_explorer.gui.theme import THEMES, apply_theme, current_theme, resolve_theme, theme_preference
+
+    assert THEMES == ("light", "dark", "system")
+    assert apply_theme(app, "light") == "light" and current_theme(app) == "light" and theme_preference(app) == "light"
+    assert apply_theme(app, "dark") == "dark" and current_theme(app) == "dark"
+    shown = apply_theme(app, "system")
+    assert shown in ("light", "dark") and shown == resolve_theme(app, "system") and theme_preference(app) == "system"
+    assert apply_theme(app, "bogus") == "dark" and theme_preference(app) == "dark"

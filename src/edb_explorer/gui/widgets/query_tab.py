@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
 from edb_explorer.core import ColumnInfo, Session
 from edb_explorer.core.analysis import build_timeline
 from edb_explorer.core.sqlworkspace import QueryResult, SqlWorkspace
-from edb_explorer.gui.icons import std
+from edb_explorer.gui.icons import icon
 from edb_explorer.gui.models import RAW_ROLE, RecordFilterProxy, RecordTableModel
 from edb_explorer.gui.tasks import TaskManager
 from edb_explorer.gui.workers import FunctionWorker
@@ -207,7 +207,7 @@ class QueryTab(QWidget):
         self.limit.setPrefix("limit ")
         bar.addWidget(self.limit)
         self.run_btn = QPushButton("Run  (Ctrl+Enter)")
-        self.run_btn.setIcon(std("SP_MediaPlay"))
+        self.run_btn.setIcon(icon("play"))
         self.run_btn.clicked.connect(self.run)
         bar.addWidget(self.run_btn)
         self.stop_btn = QPushButton("Stop")
@@ -222,7 +222,7 @@ class QueryTab(QWidget):
         self.tables_menu.aboutToShow.connect(self._fill_tables_menu)
         bar.addWidget(self.tables_btn)
         self.extract_btn = QPushButton("Extract results…")
-        self.extract_btn.setIcon(std("SP_DialogSaveButton"))
+        self.extract_btn.setIcon(icon("extract"))
         self.extract_btn.clicked.connect(lambda: self.extract_requested.emit(self.grid))
         bar.addWidget(self.extract_btn)
         bar.addStretch(1)
@@ -386,7 +386,7 @@ class TimelineTab(QWidget):
         self.system = QCheckBox("System tables")
         bar.addWidget(self.system)
         self.build_btn = QPushButton("Build timeline")
-        self.build_btn.setIcon(std("SP_MediaPlay"))
+        self.build_btn.setIcon(icon("timeline"))
         self.build_btn.clicked.connect(self.build)
         bar.addWidget(self.build_btn)
         self.stop_btn = QPushButton("Stop")

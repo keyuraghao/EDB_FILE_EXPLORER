@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from edb_explorer.gui.icons import std
+from edb_explorer.gui.icons import icon
 
 
 class Task(QObject):
@@ -119,14 +119,14 @@ class _TaskRow(QFrame):
         self.title.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         top.addWidget(self.title, 1)
         self.cancel_btn = QToolButton()
-        self.cancel_btn.setIcon(std("SP_DialogCancelButton"))
+        self.cancel_btn.setIcon(icon("cancel"))
         self.cancel_btn.setToolTip("Cancel")
         self.cancel_btn.setAutoRaise(True)
         self.cancel_btn.setVisible(task.cancellable)
         self.cancel_btn.clicked.connect(task.cancel)
         top.addWidget(self.cancel_btn)
         self.close_btn = QToolButton()
-        self.close_btn.setIcon(std("SP_TitleBarCloseButton"))
+        self.close_btn.setIcon(icon("close"))
         self.close_btn.setToolTip("Dismiss")
         self.close_btn.setAutoRaise(True)
         self.close_btn.hide()

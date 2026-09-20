@@ -1,9 +1,16 @@
-"""Light / dark themes built on the Fusion style so they look identical on Linux and Windows."""
+"""Light / dark themes built on the Fusion style so they look identical on Linux and Windows.
+
+The stored preference is ``"light"``, ``"dark"`` or ``"system"``; ``"system"`` follows the OS colour
+scheme (and tracks changes to it while the application runs).
+"""
 
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
+
+THEMES: tuple[str, ...] = ("light", "dark", "system")
 
 DARK = {
     "window": "#1f2226",
@@ -96,13 +103,47 @@ def _stylesheet(c: dict[str, str]) -> str:
     """
 
 
-def apply_theme(app: QApplication, name: str) -> None:
+def system_theme(app: QApplication) -> str:
+    """The OS colour scheme as ``"light"`` / ``"dark"`` (dark when it cannot be determined)."""
+    try:
+        scheme = app.styleHints().colorScheme()
+    except AttributeError:  # Qt < 6.5
+        return "dark"
+    return "light" if scheme == Qt.ColorScheme.Light else "dark"
+
+
+def resolve_theme(app: QApplication, preference: str) -> str:
+    return system_theme(app) if preference == "system" else ("light" if preference == "light" else "dark")
+
+
+def apply_theme(app: QApplication, preference: str) -> str:
+    """Apply a theme preference (``light`` / ``dark`` / ``system``); returns the theme actually shown."""
+    name = resolve_theme(app, preference)
     colors = DARK if name == "dark" else LIGHT
     app.setStyle("Fusion")
     app.setPalette(_palette(colors))
     app.setStyleSheet(_stylesheet(colors))
     app.setProperty("edb_theme", name)
+    app.setProperty("edb_theme_preference", preference if preference in THEMES else name)
+    if not app.property("edb_theme_watch"):
+        # re-apply when the OS switches scheme and the preference is "system"
+        try:
+            app.styleHints().colorSchemeChanged.connect(lambda _s: _follow_system(app))
+            app.setProperty("edb_theme_watch", True)
+        except AttributeError:
+            pass
+    return name
+
+
+def _follow_system(app: QApplication) -> None:
+    if theme_preference(app) == "system" and system_theme(app) != current_theme(app):
+        apply_theme(app, "system")
 
 
 def current_theme(app: QApplication) -> str:
+    """The theme currently shown: ``"light"`` or ``"dark"``."""
     return str(app.property("edb_theme") or "dark")
+
+
+def theme_preference(app: QApplication) -> str:
+    return str(app.property("edb_theme_preference") or current_theme(app))
