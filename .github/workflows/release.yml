@@ -89,9 +89,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
+        id: download
+        continue-on-error: true
         with:
           path: artifacts
+          pattern: "{wheel,binaries-*}"
           merge-multiple: true
+      - name: Retry artifact download
+        if: steps.download.outcome == 'failure'
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: "{wheel,binaries-*}"
+          merge-multiple: true
+      - run: ls -la artifacts
       - name: Extract release notes
         run: |
           python - <<'PY'
