@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from edb_explorer.cli import app
@@ -82,3 +83,26 @@ def test_analysis_commands(fake_edb: Path, tmp_path: Path) -> None:
     assert r.exit_code == 0 and json.loads(r.output)["profile"].startswith("System Resource")
     r = runner.invoke(app, ["formats"])
     assert r.exit_code == 0 and "leveldb" in r.output
+
+
+def test_mailbox_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import pytest as _pytest  # noqa: F401
+
+    from edb_explorer.core.backends.ese import ESE_MAGIC
+    from tests.test_exchange import FakeExchangeEseDB
+
+    monkeypatch.setattr("edb_explorer.core.backends.ese.EseDB", FakeExchangeEseDB)
+    p = tmp_path / "mbx.edb"
+    p.write_bytes(b"\x00\x00\x00\x00" + ESE_MAGIC + b"\x00" * 4088)
+    r = runner.invoke(app, ["mailboxes", str(p), "--json"])
+    assert r.exit_code == 0 and json.loads(r.output)[0]["number"] == 1
+    r = runner.invoke(app, ["mail", str(p), "-m", "1", "--folders"])
+    assert r.exit_code == 0 and "Inbox" in r.output
+    r = runner.invoke(app, ["mail", str(p), "-m", "1", "--folder", "Inbox", "--json"])
+    assert [m["document_id"] for m in json.loads(r.output)] == [1, 2]
+    r = runner.invoke(app, ["mail", str(p), "-m", "1", "--show", "2"])
+    assert r.exit_code == 0 and "Hello there" in r.output
+    r = runner.invoke(app, ["mail", str(p), "-m", "1", "--export", str(tmp_path / "eml"), "-f", "eml"])
+    assert r.exit_code == 0 and len(list((tmp_path / "eml").rglob("*.eml"))) == 3
+    r = runner.invoke(app, ["agents"])
+    assert r.exit_code == 0 and "Claude Code" in r.output

@@ -6,6 +6,32 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-20
+
+### Added
+- **Exchange mailbox viewer** (mail-client layout): mailboxes → folder tree → message list → preview with
+  Message / Plain text / Internet headers / Recipients / Attachments / Properties tabs. Messages are decoded
+  from the Exchange 2013+ store (`ProP` property blobs, `NativeBody` text/HTML/RTF, recipient blobs,
+  attachments via `SubobjectsBlob`), including template-derived per-mailbox tables. Export selected
+  messages, a folder or a mailbox as **EML** (with attachments), **HTML**, **TXT** or **JSON**, save
+  attachments, export the message list to any tabular format. CLI `mailboxes` / `mail`; MCP
+  `exchange_mailboxes`, `exchange_folders`, `exchange_messages`, `exchange_message`, `exchange_export`,
+  `exchange_save_attachment`.
+- ESE **template tables** are now resolved (dissect.esedb leaves them empty), so every derived table in an
+  Exchange database (`Message_N`, `Folder_N`, `Attachment_N`, …) shows its columns and values.
+- **AI agents tab**: an embedded terminal (PTY + VT100 emulation) that runs Claude Code, OpenAI Codex CLI,
+  Gemini CLI, GitHub Copilot CLI, Aider, a shell or any custom command inside the app, with one-click
+  **Configure MCP** (registers this tool's MCP server with the agent, scoped to the open evidence folders),
+  **Login** and **Start**. `More ▸ Copy MCP config JSON` for Cursor / VS Code / Windsurf / Claude Desktop.
+  CLI `agents [--configure claude|codex|gemini|copilot]`.
+- Distinct icons per database format in the database tree (ESE, SQLite, LevelDB, Access, DBF, Berkeley DB,
+  SQL dump, BSON) and for mailboxes.
+- Compressed RTF (LZFu) decoder and a MAPI property-name table.
+
+### Fixed
+- Launching the GUI from the console executable or a bare `edb-explorer` no longer keeps a console window /
+  shell prompt busy (Windows: the console is released; Linux/macOS: the process detaches).
+
 ## [0.2.0] - 2026-09-20
 
 ### Added

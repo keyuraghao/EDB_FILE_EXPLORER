@@ -248,6 +248,23 @@ class DatabaseTreeModel(QStandardItemModel):
         cols.setToolTip(f"{db.info.table_count} tables")
         cols.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.appendRow([item, sub, cols])
+        try:
+            from edb_explorer.core.exchange import is_exchange_database
+
+            exchange = is_exchange_database(db)
+        except Exception:
+            exchange = False
+        if exchange:
+            from edb_explorer.gui.icons import kind_icon
+
+            mb = QStandardItem("Mailboxes (Exchange viewer)")
+            mb.setEditable(False)
+            mb.setIcon(kind_icon("mailbox"))
+            mb.setData("mailboxes", KIND_ROLE)
+            mb.setData(db.id, DB_ID_ROLE)
+            mb.setToolTip("Browse mailboxes, folders and messages like a mail client - double-click to open")
+            mb.setForeground(QColor("#f6ad55"))
+            item.appendRow([mb, QStandardItem(""), QStandardItem("")])
         if db.profile.views:
             analysis = QStandardItem("Analysis views")
             analysis.setEditable(False)

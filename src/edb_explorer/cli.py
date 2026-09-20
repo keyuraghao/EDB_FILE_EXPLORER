@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Annotated, Any
@@ -57,10 +58,37 @@ def _root(
     )
     if ctx.invoked_subcommand is None:
         # No command: behave like a desktop application (double-click / bare `edb-explorer`).
-        _launch_gui([])
+        _launch_gui([], detach=True)
 
 
-def _launch_gui(files: list[str]) -> None:
+def _detach_from_terminal() -> None:
+    """Let the launching console/terminal go: the GUI must not keep a console window or shell prompt busy."""
+    if os.environ.get("EDB_EXPLORER_FOREGROUND"):
+        return
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            ctypes.windll.kernel32.FreeConsole()  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        return
+    if not hasattr(os, "fork") or not sys.stdin.isatty():
+        return
+    try:
+        if os.fork() > 0:
+            os._exit(0)  # parent returns to the shell immediately
+        os.setsid()
+        devnull = os.open(os.devnull, os.O_RDWR)
+        for fd in (0, 1, 2):
+            os.dup2(devnull, fd)
+    except OSError:
+        pass
+
+
+def _launch_gui(files: list[str], detach: bool = False) -> None:
+    if detach:
+        _detach_from_terminal()
     try:
         from edb_explorer.gui.app import run
     except ImportError as exc:  # pragma: no cover
@@ -584,6 +612,164 @@ def summary(
     """Analysis overview: detected type, tables with timestamp columns and sampled date ranges (JSON)."""
     db = _open(file)
     console.print_json(json.dumps(database_summary(db, count=count), default=str))
+
+
+@app.command()
+def mailboxes(
+    file: Annotated[Path, typer.Argument(exists=True, help="Exchange mailbox database (.edb).")],
+    system: Annotated[bool, typer.Option("--system", help="Include system/health/archive mailboxes.")] = False,
+    as_json: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """List the mailboxes of an Exchange mailbox database."""
+    from edb_explorer.core.exchange import ExchangeStore
+
+    db = _open(file)
+    try:
+        store = ExchangeStore(db)
+    except EdbExplorerError as exc:
+        _fail(exc)
+    boxes = store.mailboxes(include_system=system)
+    if as_json:
+        console.print_json(json.dumps([b.to_dict() for b in boxes]))
+        return
+    rt = RichTable(title=f"{db.path.name} - {len(boxes)} mailbox(es)")
+    for c in ("#", "Mailbox", "Messages", "Size", "Deleted", "Last logon", "Tables"):
+        rt.add_column(c, justify="right" if c in ("#", "Messages", "Size", "Deleted") else "left")
+    for b in boxes:
+        rt.add_row(
+            str(b.number),
+            b.display_name,
+            f"{b.message_count:,}",
+            f"{b.message_size:,}",
+            str(b.deleted_count),
+            b.last_logon or "",
+            "yes" if b.has_tables else "no",
+        )
+    console.print(rt)
+
+
+@app.command()
+def mail(
+    file: Annotated[Path, typer.Argument(exists=True, help="Exchange mailbox database (.edb).")],
+    mailbox: Annotated[int, typer.Option("--mailbox", "-m", help="Mailbox number (see `mailboxes`).")],
+    folder: Annotated[str | None, typer.Option("--folder", help="Folder path or name (default: all folders).")] = None,
+    grep: Annotated[
+        str | None,
+        typer.Option("--grep", "-g", help="Only messages whose subject/sender/recipients contain this text."),
+    ] = None,
+    limit: Annotated[int, typer.Option("--limit", "-n", help="Max messages (0 = all).")] = 100,
+    folders: Annotated[bool, typer.Option("--folders", help="List the folder tree instead of messages.")] = False,
+    show: Annotated[int | None, typer.Option("--show", help="Print one message (document id) in full.")] = None,
+    export: Annotated[
+        Path | None, typer.Option("--export", "-o", help="Export the listed messages into this directory.")
+    ] = None,
+    fmt: Annotated[str, typer.Option("--format", "-f", help="eml | html | txt | json (with --export)")] = "eml",
+    hidden: Annotated[bool, typer.Option("--hidden", help="Include hidden (FAI) items.")] = False,
+    as_json: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Browse or export the messages of an Exchange mailbox (folders, message list, single message, EML export)."""
+    from edb_explorer.core.exchange import ExchangeStore
+    from edb_explorer.core.exchange.export import export_messages, message_to_text
+
+    db = _open(file)
+    try:
+        store = ExchangeStore(db)
+        if folders:
+            tree = store.folders(mailbox)
+            if as_json:
+                console.print_json(json.dumps([f.to_dict() for f in tree]))
+            else:
+                for f in tree:
+                    console.print("  " * f.depth + f"{f.display_name}  [dim]({f.message_count:,} items)[/dim]")
+            return
+        if show is not None:
+            d = store.message(mailbox, show)
+            console.print_json(json.dumps(d.to_dict(), default=str)) if as_json else console.print(message_to_text(d))
+            return
+        folder_id = None
+        if folder:
+            match = next(
+                (
+                    f
+                    for f in store.folders(mailbox)
+                    if f.path.lower() == folder.lower() or f.display_name.lower() == folder.lower()
+                ),
+                None,
+            )
+            if match is None:
+                _fail(EdbExplorerError(f"Folder {folder!r} not found; use --folders to list them"))
+                return
+            folder_id = match.folder_id
+        msgs = store.messages(mailbox, folder_id, include_hidden=hidden, text=grep, limit=None if limit == 0 else limit)
+    except EdbExplorerError as exc:
+        _fail(exc)
+    if export is not None:
+        with console.status("Exporting…") as status:
+            paths = export_messages(
+                store, msgs, export, fmt, progress=lambda i, p: _status_tick(status, f"{i}/{len(msgs)}")
+            )
+        console.print(f"[green]Exported {len(paths)} message(s) to {export}[/green]")
+        return
+    if as_json:
+        console.print_json(json.dumps([m.to_dict() for m in msgs]))
+        return
+    rt = RichTable(title=f"mailbox {mailbox}: {len(msgs)} message(s)")
+    for c in ("Id", "Received", "From", "Subject", "To", "Att"):
+        rt.add_column(c, overflow="fold", max_width=50)
+    for m in msgs:
+        rt.add_row(
+            str(m.document_id),
+            (m.date_received or "")[:19],
+            m.sender_email or m.sender_name,
+            m.subject,
+            m.display_to,
+            "📎" if m.has_attachments else "",
+        )
+    console.print(rt)
+
+
+@app.command()
+def agents(
+    configure: Annotated[
+        str | None,
+        typer.Option(
+            "--configure", help="Register the MCP server with this agent id (claude, codex, gemini, copilot)."
+        ),
+    ] = None,
+    allow: Annotated[
+        list[Path] | None, typer.Option("--allow", help="Evidence directories the agent may open (repeatable).")
+    ] = None,
+) -> None:
+    """Show which AI agent CLIs are installed and (optionally) register the MCP server with one of them."""
+    from edb_explorer.core.agents import AGENTS, agent_by_id, agent_status, configure_agent, mcp_config_snippet
+
+    if configure:
+        try:
+            spec = agent_by_id(configure)
+        except KeyError:
+            _fail(
+                ValueError(
+                    f"unknown agent {configure!r}; choose from {', '.join(a.id for a in AGENTS if a.supports_mcp)}"
+                )
+            )
+        console.print(configure_agent(spec, [str(p) for p in allow] if allow else None))
+        return
+    rt = RichTable(title="AI agent CLIs")
+    for c in ("Agent", "Installed", "Version / path", "MCP"):
+        rt.add_column(c, overflow="fold")
+    for a in AGENTS:
+        if a.id == "shell":
+            continue
+        st = agent_status(a)
+        rt.add_row(
+            a.name,
+            "yes" if st["installed"] else "no",
+            (st["version"] or "") + ("  " + st["path"] if st["path"] else a.install_hint),
+            "yes" if a.supports_mcp else "-",
+        )
+    console.print(rt)
+    console.print("MCP config snippet:")
+    console.print_json(json.dumps(mcp_config_snippet([str(p) for p in allow] if allow else None)))
 
 
 @app.command()

@@ -8,7 +8,7 @@ from PySide6.QtCore import QModelIndex, QPoint, QSortFilterProxyModel, Qt, Signa
 from PySide6.QtWidgets import QHBoxLayout, QHeaderView, QLineEdit, QMenu, QToolButton, QTreeView, QVBoxLayout, QWidget
 
 from edb_explorer.core import EdbDatabase
-from edb_explorer.gui.icons import app_icon, std
+from edb_explorer.gui.icons import kind_icon, std
 from edb_explorer.gui.models import DB_ID_ROLE, KIND_ROLE, TABLE_ROLE, VIEW_ROLE, DatabaseTreeModel
 
 
@@ -20,6 +20,7 @@ class DatabaseTree(QWidget):
     count_requested = Signal(str)
     export_table_requested = Signal(str, str)
     view_activated = Signal(str, str)  # db_id, view id
+    mailboxes_activated = Signal(str)  # db_id (Exchange)
     stats_requested = Signal(str, str)
     sql_requested = Signal(str)
 
@@ -74,10 +75,9 @@ class DatabaseTree(QWidget):
         hdr.resizeSection(2, 48)
         hdr.setMinimumSectionSize(40)
         layout.addWidget(self.view, 1)
-        self._icon = app_icon(32)
 
     def add_database(self, db: EdbDatabase) -> None:
-        item = self.model.add_database(db, self._icon)
+        item = self.model.add_database(db, kind_icon(db.kind))
         self.view.expand(self.proxy.mapFromSource(item.index()))
         self.view.setCurrentIndex(self.proxy.mapFromSource(item.index()))
 
@@ -104,12 +104,14 @@ class DatabaseTree(QWidget):
             self.table_activated.emit(src.data(DB_ID_ROLE), src.data(TABLE_ROLE))
         elif kind == "view":
             self.view_activated.emit(src.data(DB_ID_ROLE), src.data(VIEW_ROLE))
+        elif kind == "mailboxes":
+            self.mailboxes_activated.emit(src.data(DB_ID_ROLE))
         else:
             self.view.setExpanded(index, not self.view.isExpanded(index))
 
     def _clicked(self, index: QModelIndex) -> None:
         src = self._src(index)
-        if src.data(KIND_ROLE) in ("db", "table", "view", "views"):
+        if src.data(KIND_ROLE) in ("db", "table", "view", "views", "mailboxes"):
             self.database_selected.emit(src.data(DB_ID_ROLE))
 
     def _context_menu(self, pos: QPoint) -> None:
@@ -128,6 +130,9 @@ class DatabaseTree(QWidget):
             menu.addSeparator()
         elif kind == "view":
             menu.addAction("Run view", lambda: self.view_activated.emit(db_id, src.data(VIEW_ROLE)))
+            menu.addSeparator()
+        elif kind == "mailboxes":
+            menu.addAction("Open mailbox viewer", lambda: self.mailboxes_activated.emit(db_id))
             menu.addSeparator()
         menu.addAction("SQL console for this database", lambda: self.sql_requested.emit(db_id))
         menu.addAction("Count records in all tables", lambda: self.count_requested.emit(db_id))

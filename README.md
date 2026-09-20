@@ -21,7 +21,11 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/analysis-view.png" width="900" alt="EDB Explorer - SRUM network usage view with the task panel">
+  <img src="docs/screenshots/mailbox.png" width="900" alt="EDB Explorer - Exchange mailbox viewer">
+</p>
+<p align="center">
+  <img src="docs/screenshots/analysis-view.png" width="440" alt="SRUM network usage view">
+  <img src="docs/screenshots/agents.png" width="440" alt="Claude Code running inside EDB Explorer">
 </p>
 
 ---
@@ -65,6 +69,19 @@ Everything is **strictly read-only** - the tool never writes to an evidence file
   **artifact views** - ready-made SQL such as *Browsing history*, *Messages with handles*, *Network usage by
   application*, *Quarantined downloads* - one double-click away.
 
+**Exchange mailbox viewer** (`Ctrl+M`, or double-click *Mailboxes* under an Exchange database)
+- Mail-client layout: mailboxes → folders → message list → preview (rendered HTML / plain text / internet
+  headers / recipients / attachments / every MAPI property). Works on Exchange 2013+ databases by decoding the
+  store's property blobs directly - no Exchange server, no PST.
+- Export selected messages, a folder or a whole mailbox as **EML** (attachments embedded), **HTML**, **TXT** or
+  **JSON**; save attachments; export the message list to xlsx/csv/pdf.
+
+**AI agents inside the app** (`Ctrl+Shift+A`)
+- Embedded terminal running **Claude Code, OpenAI Codex CLI, Gemini CLI, GitHub Copilot CLI, Aider**, a shell
+  or any command. *Configure MCP* registers this tool's MCP server with the agent (scoped to the folders of the
+  open databases), *Login* / *Start* do the rest - the agent can then call `run_sql`, `timeline`,
+  `exchange_messages`, `generate_report`… on the evidence you have open.
+
 **Analysis**
 - **SQL console** over *any* format: tables are materialised into SQLite with decoded values; every open database is
   attached as a schema so you can join a phone's messages against a laptop's browser history.
@@ -85,7 +102,7 @@ case ID / analyst / notes → **HTML, PDF, DOCX, Markdown, XLSX, TXT, JSON**.
 
 | Format | Examples | Notes |
 |---|---|---|
-| Microsoft ESE | `ntds.dit`, `SRUDB.dat`, Exchange `.edb`, `WebCacheV01.dat`, `Windows.edb`, UAL `.mdb`, `DataStore.edb` | schema, indexes, long values, multi-values |
+| Microsoft ESE | `ntds.dit`, `SRUDB.dat`, Exchange `.edb`, `WebCacheV01.dat`, `Windows.edb`, UAL `.mdb`, `DataStore.edb` | schema, indexes, long values, multi-values, template tables; Exchange mailboxes decoded into a mail-client view |
 | SQLite 3 | iOS `sms.db`, `AddressBook.sqlitedb`, `CallHistory.storedata`, `knowledgeC.db`, `Photos.sqlite`, Android `contacts2.db` / `mmssms.db` / `calllog.db`, WhatsApp, Chrome `History` / `Cookies` / `Login Data`, Firefox `places.sqlite`, Safari `History.db`, `ActivitiesCache.db`, `wpndatabase.db`, `TCC.db` … | WAL merged, no locks on evidence |
 | LevelDB | Chrome/Edge *Local Storage*, *Session Storage*, *IndexedDB*, Discord, Teams, Slack, VS Code | `live` and `all_records` (incl. deleted / superseded) |
 | Access | `.mdb` (Jet 3/4), `.accdb` (ACE) | |
@@ -104,7 +121,7 @@ Grab the build for your OS from the [releases page](https://github.com/keyuragha
 
 | OS | File | How to run |
 |---|---|---|
-| Windows | `EDB-Explorer-<ver>-setup.exe` | run the installer → **EDB Explorer** appears in the Start Menu / desktop |
+| Windows | `EDB-Explorer-<ver>-setup.exe` | run the installer → **EDB Explorer** appears in the Start Menu / desktop (no console window) |
 | Windows (portable) | `edb-explorer-<ver>-windows-x64.zip` | unzip, double-click `EDB-Explorer.exe` |
 | Linux | `edb-explorer-<ver>-linux-x86_64.tar.gz` | extract, double-click `EDB-Explorer`, or run `./install.sh` once to add it to your app menu |
 
@@ -164,6 +181,9 @@ edb-explorer timeline sms.db History SRUDB.dat -o timeline.xlsx --start 2021-01-
 edb-explorer summary knowledgeC.db                     # analysis overview (JSON)
 edb-explorer formats                                   # what can be opened
 edb-explorer timestamp 132565120200137766              # FILETIME? OLE? Unix? Cocoa? all readings
+edb-explorer mailboxes "Mailbox Database.edb"          # Exchange: mailboxes
+edb-explorer mail "Mailbox Database.edb" -m 129 --folder Inbox --export out/ -f eml
+edb-explorer agents --configure claude --allow /cases/001   # register the MCP server with Claude Code
 ```
 
 Every command has `--json` output where it makes sense and `--help`.
@@ -202,12 +222,13 @@ Docker (headless, Streamable HTTP on `:8765`, evidence mounted read-only):
 docker run --rm -p 8765:8765 -v /cases/001/evidence:/evidence:ro ghcr.io/keyuraghao/EDB_FILE_EXPLORER
 ```
 
-**Tools exposed** (25) - `open_database`, `scan_directory`, `list_databases`, `close_database`,
+**Tools exposed** (31) - `open_database`, `scan_directory`, `list_databases`, `close_database`,
 `get_database_info`, `database_summary`, `list_tables`, `describe_table`, `count_records`, `query_table`
 (paging + filters), `get_record`, `get_record_raw` (hex + every decoding), `search`, **`run_sql`** (any format,
 cross-database), **`list_views`** / **`run_view`**, **`column_statistics`**, **`detect_timestamps`**, **`timeline`**,
 `export_table_to_file`, `export_database_to_directory`, `generate_report`, `interpret_timestamp`,
-`list_known_profiles`, `list_formats`; resources `edb://databases`, `edb://{db}/tables`, `edb://{db}/{table}/schema`;
+`list_known_profiles`, `list_formats`, **`exchange_mailboxes` / `exchange_folders` / `exchange_messages` /
+`exchange_message` / `exchange_export` / `exchange_save_attachment`**; resources `edb://databases`, `edb://{db}/tables`, `edb://{db}/{table}/schema`;
 prompt `triage_database`. See [docs/mcp.md](docs/mcp.md).
 
 An agent conversation typically looks like:
@@ -229,8 +250,10 @@ src/edb_explorer/
 │   ├── values.py         timestamp / SID / GUID / UTF-16 decoding, encoding guesser, hexdump
 │   ├── sqlworkspace.py   SQL over any backend (materialised into SQLite, one schema per database)
 │   ├── analysis.py       timestamp detection, column statistics, timeline, summary
+│   ├── exchange/         Exchange store: ProP property blobs, RTF, mailboxes/folders/messages, EML/HTML export
+│   ├── agents.py         AI agent CLI detection and MCP registration (Claude Code, Codex, Gemini, Copilot)
 │   ├── search.py, formats.py, export.py, report.py
-├── gui/                  PySide6 application (welcome page, task panel, tabs, dialogs, themes)
+├── gui/                  PySide6 application (welcome page, task panel, mailbox viewer, embedded terminal, dialogs)
 ├── mcp/                  MCP server built on the core
 └── cli.py                Typer CLI
 ```

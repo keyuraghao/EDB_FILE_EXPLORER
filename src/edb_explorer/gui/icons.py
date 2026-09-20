@@ -59,6 +59,44 @@ def _render(px: int) -> QPixmap:
     return pm
 
 
+_KIND_STYLE = {
+    "ese": ("#2b6cb0", "E"),
+    "sqlite": ("#0e9f8f", "S"),
+    "leveldb": ("#3f9142", "L"),
+    "access": ("#b7332f", "A"),
+    "dbf": ("#d97706", "D"),
+    "bsddb": ("#6d28d9", "B"),
+    "sqldump": ("#4b5563", "Q"),
+    "bson": ("#1f7a3d", "M"),
+    "mailbox": ("#c05621", "@"),
+}
+_kind_cache: dict[str, QIcon] = {}
+
+
+def kind_icon(kind: str) -> QIcon:
+    """A small coloured tile with a letter, one colour per database format."""
+    if kind in _kind_cache:
+        return _kind_cache[kind]
+    color, letter = _KIND_STYLE.get(kind, ("#718096", "?"))
+    icon = QIcon()
+    for px in (16, 24, 32, 48):
+        pm = QPixmap(px, px)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(color))
+        p.drawRoundedRect(QRectF(0.5, 0.5, px - 1, px - 1), px * 0.22, px * 0.22)
+        p.setPen(QColor("#ffffff"))
+        f = QFont("Sans", int(px * 0.55), QFont.Weight.Bold)
+        p.setFont(f)
+        p.drawText(QRectF(0, 0, px, px), Qt.AlignmentFlag.AlignCenter, letter)
+        p.end()
+        icon.addPixmap(pm)
+    _kind_cache[kind] = icon
+    return icon
+
+
 def std(name: str) -> QIcon:
     """Fetch a QStyle standard icon by StandardPixmap name (e.g. 'SP_DialogOpenButton')."""
     style = QApplication.style()

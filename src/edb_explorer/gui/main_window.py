@@ -27,6 +27,7 @@ from edb_explorer.core.sqlworkspace import SqlWorkspace
 from edb_explorer.gui.icons import app_icon, std
 from edb_explorer.gui.tasks import TaskManager, TaskPanel
 from edb_explorer.gui.theme import apply_theme, current_theme
+from edb_explorer.gui.widgets.agents_tab import AgentsTab
 from edb_explorer.gui.widgets.database_tree import DatabaseTree
 from edb_explorer.gui.widgets.dialogs import (
     AboutDialog,
@@ -38,6 +39,7 @@ from edb_explorer.gui.widgets.dialogs import (
 )
 from edb_explorer.gui.widgets.info_panel import InfoPanel
 from edb_explorer.gui.widgets.inspector import RecordInspector
+from edb_explorer.gui.widgets.mailbox_tab import MailboxTab
 from edb_explorer.gui.widgets.query_tab import QueryTab, ResultsGrid, TimelineTab
 from edb_explorer.gui.widgets.stats_dialog import StatsDialog
 from edb_explorer.gui.widgets.table_tab import TableTab
@@ -72,6 +74,7 @@ class MainWindow(QMainWindow):
         self.workspace = SqlWorkspace()
         self._sql_tab: QueryTab | None = None
         self._timeline_tab: TimelineTab | None = None
+        self._agents_tab: AgentsTab | None = None
 
         self._build_central()
         self._build_docks()
@@ -111,6 +114,7 @@ class MainWindow(QMainWindow):
         self.tree.export_table_requested.connect(lambda db_id, t: self._export(db_id, t))
         self.tree.count_requested.connect(self._count_all)
         self.tree.view_activated.connect(self.run_view)
+        self.tree.mailboxes_activated.connect(self.show_mailboxes)
         self.tree.stats_requested.connect(lambda db_id, t: self._show_stats_for(db_id, t))
         self.tree.sql_requested.connect(lambda db_id: self.show_sql(db_id))
         self.dock_tree = QDockWidget("Databases", self)
@@ -187,6 +191,11 @@ class MainWindow(QMainWindow):
         self._act(analysis, "&SQL console", self.show_sql, "Ctrl+Q", "SP_ComputerIcon")
         self._act(analysis, "&Timeline", self.show_timeline, "Ctrl+L", "SP_FileDialogListView")
         self._act(analysis, "Column &statistics for current table…", self.show_stats, "Ctrl+I")
+        self._act(analysis, "Exchange &mailbox viewer", lambda: self.show_mailboxes(None), "Ctrl+M", "SP_DirHomeIcon")
+        analysis.addSeparator()
+        self._act(
+            analysis, "&AI agents (Claude Code, Codex, Gemini…)", self.show_agents, "Ctrl+Shift+A", "SP_ComputerIcon"
+        )
         self.views_menu = analysis.addMenu("Artifact &views")
         self.views_menu.aboutToShow.connect(self._fill_views_menu)
 
@@ -216,6 +225,7 @@ class MainWindow(QMainWindow):
         tb.addAction(self._act(None, "Search", self.show_search, None, "SP_FileDialogContentsView"))
         tb.addAction(self._act(None, "SQL", self.show_sql, None, "SP_ComputerIcon"))
         tb.addAction(self._act(None, "Timeline", self.show_timeline, None, "SP_FileDialogListView"))
+        tb.addAction(self._act(None, "AI agents", self.show_agents, None, "SP_ComputerIcon"))
         tb.addAction(self._act(None, "Extract", self.export_current, None, "SP_DialogSaveButton"))
         tb.addAction(self._act(None, "Report", self.show_report, None, "SP_FileDialogDetailedView"))
 
@@ -293,10 +303,15 @@ class MainWindow(QMainWindow):
                 f"Opened {', '.join(d.path.name for d in opened)} · {len(self.session)} database(s) open", 8000
             )
             if self.tabs.count() == 1 and self.tabs.widget(0) is self._placeholder and len(opened) == 1:
-                # first database: open its most interesting table automatically
-                tables = opened[0].tables(include_system=False)
-                if tables:
-                    self.open_table(opened[0].id, tables[0].name)
+                # first database: open its most useful view automatically
+                from edb_explorer.core.exchange import is_exchange_database
+
+                if is_exchange_database(opened[0]):
+                    self.show_mailboxes(opened[0].id)
+                else:
+                    tables = opened[0].tables(include_system=False)
+                    if tables:
+                        self.open_table(opened[0].id, tables[0].name)
         if errors:
             QMessageBox.warning(
                 self, "Some files could not be opened", "\n\n".join(f"{p}\n{e}" for p, e in errors.items())
@@ -398,6 +413,8 @@ class MainWindow(QMainWindow):
             self._sql_tab = None
         if w is self._timeline_tab:
             self._timeline_tab = None
+        if w is self._agents_tab:
+            self._agents_tab = None
         self.tabs.removeTab(index)
         w.deleteLater()
         if self.tabs.count() == 0:
@@ -500,6 +517,43 @@ class MainWindow(QMainWindow):
         self.tabs.setTabToolTip(idx, f"{db.path.name}\n{view.description}")
         self.tabs.setCurrentIndex(idx)
         tab.run()
+
+    def show_mailboxes(self, db_id: str | None) -> None:
+        from edb_explorer.core.exchange import is_exchange_database
+
+        candidates = [d for d in self.session if is_exchange_database(d)]
+        db = None
+        if db_id:
+            db = self.session.get(db_id)
+        elif candidates:
+            current = self._current_db_id()
+            db = next((d for d in candidates if d.id == current), candidates[0])
+        if db is None or not is_exchange_database(db):
+            QMessageBox.information(
+                self,
+                "Mailbox viewer",
+                "Open an Exchange mailbox database (.edb with Mailbox/Folder/Message tables) first.",
+            )
+            return
+        for i in range(self.tabs.count()):
+            w = self.tabs.widget(i)
+            if isinstance(w, MailboxTab) and w.db is db:
+                self.tabs.setCurrentIndex(i)
+                return
+        self._drop_placeholder()
+        tab = MailboxTab(db, self.tasks, self)
+        tab.status.connect(lambda m: self.statusBar().showMessage(m))
+        idx = self.tabs.addTab(tab, f"✉ {db.path.name}")
+        self.tabs.setTabToolTip(idx, f"Exchange mailbox viewer\n{db.path}")
+        self.tabs.setCurrentIndex(idx)
+
+    def show_agents(self) -> None:
+        if self._agents_tab is None:
+            self._drop_placeholder()
+            self._agents_tab = AgentsTab(self.session, self)
+            self._agents_tab.status.connect(lambda m: self.statusBar().showMessage(m))
+            self.tabs.addTab(self._agents_tab, "AI agents")
+        self.tabs.setCurrentWidget(self._agents_tab)
 
     def show_timeline(self) -> None:
         if self._timeline_tab is None:

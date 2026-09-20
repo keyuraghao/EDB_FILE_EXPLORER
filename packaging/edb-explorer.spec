@@ -35,7 +35,8 @@ hiddenimports = (
     + collect_submodules("access_parser")
     + collect_submodules("dbfread")
     + collect_submodules("bson")
-    + ["cramjam", "construct", "tabulate"]
+    + ["cramjam", "construct", "tabulate", "pyte", "wcwidth"]
+    + (["winpty"] if sys.platform.startswith("win") else [])
     + collect_submodules("edb_explorer")
     + collect_submodules("mcp")
     + collect_submodules("mcp_types")
@@ -49,6 +50,7 @@ datas = (
     + collect_data_files("docx")
     + collect_data_files("reportlab", includes=["fonts/*"])
     + collect_data_files("mcp")
+    + collect_data_files("wcwidth")
 )
 excludes = [
     "tkinter", "matplotlib", "numpy", "scipy", "pandas", "IPython", "jupyter", "pytest",

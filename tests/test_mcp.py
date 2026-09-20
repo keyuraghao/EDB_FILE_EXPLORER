@@ -134,3 +134,39 @@ def test_analysis_tools(server: Any, fake_edb: Path, tmp_path: Path) -> None:
     tl = _call(server, "timeline", limit=3, output_path=str(tmp_path / "tl.csv"))
     assert tl["count"] == 25 and tl["rows_written"] == 25 and len(tl["events"]) == 3
     assert len(_call(server, "list_formats")["formats"]) == 8
+
+
+def test_exchange_tools(server: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.test_exchange import FakeExchangeEseDB
+
+    monkeypatch.setattr("edb_explorer.core.backends.ese.EseDB", FakeExchangeEseDB)
+    from edb_explorer.core.backends.ese import ESE_MAGIC
+
+    p = tmp_path / "mbx.edb"
+    p.write_bytes(b"\x00\x00\x00\x00" + ESE_MAGIC + b"\x00" * 4088)
+    _call(server, "open_database", path=str(p))
+    boxes = _call(server, "exchange_mailboxes", db="mbx")
+    assert boxes["count"] == 1 and boxes["mailboxes"][0]["display_name"] == "Jane Doe"
+    folders = _call(server, "exchange_folders", db="mbx", mailbox=1)
+    assert folders["count"] == 4
+    msgs = _call(server, "exchange_messages", db="mbx", mailbox=1, folder_name="Inbox")
+    assert msgs["returned"] == 2 and msgs["messages"][0]["subject"] == "Invoice attached"
+    detail = _call(server, "exchange_message", db="mbx", mailbox=1, document_id=1)
+    assert detail["body_text"] == "Plain text body" and detail["attachments"][0]["inid"] == 7
+    out = _call(
+        server,
+        "exchange_export",
+        db="mbx",
+        output_dir=str(tmp_path / "exp"),
+        mailbox=1,
+        document_ids=[2],
+        format="html",
+    )
+    assert out["messages_written"] == 1
+    att = _call(server, "exchange_save_attachment", db="mbx", mailbox=1, inid=7, output_path=str(tmp_path / "att"))
+    assert att["name"] == "invoice.zip" and Path(att["output_path"]).read_bytes().startswith(b"PK")
+    assert (
+        "error" in _call(server, "exchange_mailboxes", db="srudb")
+        if "srudb" in _call(server, "list_databases")["databases"]
+        else True
+    )

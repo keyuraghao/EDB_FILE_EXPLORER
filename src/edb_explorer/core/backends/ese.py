@@ -9,6 +9,8 @@ from typing import Any
 from dissect.esedb import EseDB
 from dissect.esedb.exceptions import Error as DissectError
 from dissect.esedb.exceptions import InvalidDatabase
+from dissect.esedb.record import RecordData
+from dissect.esedb.table import Column as DissectColumn
 
 from edb_explorer.core.backends.base import Backend, BackendInfo, BackendTable
 from edb_explorer.core.exceptions import InvalidDatabaseError
@@ -54,6 +56,59 @@ _HEADER_INTS = (
     "ulPagePatchCount",
 )
 _HEADER_TIMES = ("logtimeAttach", "logtimeDetach", "logtimeConsistent", "logtimeRepair", "logtimeGenMaxCreate")
+
+
+# --------------------------------------------------------------------------- #
+# Template tables (Exchange 2013+ derives every per-mailbox table from a template)
+# --------------------------------------------------------------------------- #
+_orig_get_tagged = RecordData._get_tagged
+
+
+def _get_tagged_with_derived(self: RecordData, column: Any) -> tuple[Any, Any]:
+    """Tagged values of template-derived columns carry the ``fDerived`` flag; look them up accordingly."""
+    if getattr(column, "_edb_derived", False):
+        idx = self._find_tag_field_idx(column.identifier, True)
+        if idx is None:
+            return None, column.default
+        tag_field = self._get_tag_field(idx)
+        data_start = tag_field.offset + (1 if tag_field.has_extended_info else 0)
+        data_end = self._get_tag_field(idx + 1).offset if idx + 1 < self._tagged_data_count else len(self.data)
+        if tag_field.is_null:
+            return tag_field, None
+        base = self._tagged_data_start
+        return tag_field, self.data[base + data_start : base + data_end]
+    return _orig_get_tagged(self, column)
+
+
+if getattr(RecordData._get_tagged, "__name__", "") != "_get_tagged_with_derived":
+    RecordData._get_tagged = _get_tagged_with_derived
+
+
+def _inherit_template(table: Any, tables_by_name: dict[str, Any]) -> str | None:
+    """Copy the columns/indexes of ``table``'s template table into it (dissect leaves derived tables empty)."""
+    record = getattr(table, "record", None)
+    if record is None:
+        return None
+    try:
+        template_name = record.get("TemplateTable")
+    except Exception:
+        return None
+    if not template_name or table.columns:
+        return template_name or None
+    template = tables_by_name.get(template_name)
+    if template is None:
+        return template_name
+    if not template.columns and getattr(template, "record", None) is not None:
+        _inherit_template(template, tables_by_name)
+    for col in template.columns:
+        copy = DissectColumn(col.identifier, col.name, col.type, col.record)
+        copy._edb_derived = True
+        table._add_column(copy)
+    if not table.indexes:
+        table.indexes = list(template.indexes)
+    if getattr(table, "_long_value_record", None) is None:
+        table._long_value_record = getattr(template, "_long_value_record", None)
+    return template_name
 
 
 def _column_info(col: Any) -> ColumnInfo:
@@ -106,6 +161,7 @@ class EseBackend(Backend):
             raise InvalidDatabaseError(f"{self.path.name}: failed to parse ({exc})") from exc
         self._raw: dict[str, Any] = {}
         self._tables: list[BackendTable] | None = None
+        self.templates: dict[str, str] = {}
 
     def close(self) -> None:
         try:
@@ -117,7 +173,19 @@ class EseBackend(Backend):
     def tables(self) -> list[BackendTable]:
         if self._tables is None:
             out: list[BackendTable] = []
-            for raw in self._db.tables():
+            raw_tables = list(self._db.tables())
+            by_name = {t.name: t for t in raw_tables}
+            templates: dict[str, str] = {}
+            for raw in raw_tables:
+                try:
+                    tmpl = _inherit_template(raw, by_name)
+                except Exception as exc:
+                    log.debug("template inheritance failed for %s: %s", raw.name, exc)
+                    tmpl = None
+                if tmpl:
+                    templates[raw.name] = tmpl
+            self.templates = templates
+            for raw in raw_tables:
                 try:
                     columns = [_column_info(c) for c in raw.columns]
                     indexes = [_index_info(i) for i in raw.indexes]
@@ -125,6 +193,7 @@ class EseBackend(Backend):
                     log.warning("Failed to read schema for table %s: %s", raw.name, exc)
                     columns, indexes = [], []
                 self._raw[raw.name] = raw
+                extra = {"template": templates[raw.name]} if raw.name in templates else {}
                 out.append(
                     BackendTable(
                         name=raw.name,
@@ -132,6 +201,7 @@ class EseBackend(Backend):
                         indexes=indexes,
                         root_page=int(raw.root_page),
                         is_system=is_system_table(raw.name),
+                        extra=extra,
                     )
                 )
             self._tables = out

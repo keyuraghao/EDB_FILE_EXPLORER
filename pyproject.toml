@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "edb-explorer"
-version = "0.2.0"
+version = "0.3.0"
 description = "Cross-platform GUI, CLI and MCP server for forensic database analysis: ESE (ntds.dit, SRUDB, Exchange), SQLite (iOS/Android/browsers/macOS/Windows apps), LevelDB, Access, DBF, Berkeley DB and SQL/BSON dumps - with SQL, timelines and reports."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -50,7 +50,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-gui = ["PySide6>=6.6"]
+gui = ["PySide6>=6.6", "pyte>=0.8", "pywinpty>=2.0; sys_platform == 'win32'"]
 mcp = ["mcp>=1.6"]
 all = ["edb-explorer[gui,mcp]"]
 dev = [
@@ -110,6 +110,8 @@ ignore = [
 "src/edb_explorer/core/backends/__init__.py" = ["E501"]
 "src/edb_explorer/gui/**" = ["E501"]
 "src/edb_explorer/cli.py" = ["E501"]  # typer help strings
+"src/edb_explorer/core/exchange/export.py" = ["E501"]  # HTML template strings
+"src/edb_explorer/core/agents.py" = ["E501"]
 "src/edb_explorer/mcp/server.py" = ["E501"]  # tool docstrings are read by agents; keep them unwrapped  # long user-facing strings; code itself is formatted by ruff
 
 [tool.mypy]

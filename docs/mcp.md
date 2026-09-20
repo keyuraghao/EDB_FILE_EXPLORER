@@ -18,6 +18,19 @@ A typical agent session: `open_database` → `database_summary` → `list_views`
 
 Pre-open files by listing them: `edb-explorer mcp SRUDB.dat ntds.dit`.
 
+## Registering with an agent from the app or CLI
+
+The GUI's **AI agents** tab (or `edb-explorer agents --configure claude|codex|gemini|copilot --allow DIR`)
+writes the server into the agent's own configuration:
+
+| Agent | What is written |
+|---|---|
+| Claude Code | `claude mcp add --scope user edb-explorer -- <edb-explorer> mcp --allow …` |
+| OpenAI Codex CLI | `[mcp_servers.edb-explorer]` in `~/.codex/config.toml` |
+| Gemini CLI | `mcpServers.edb-explorer` in `~/.gemini/settings.json` |
+| GitHub Copilot CLI | `mcpServers.edb-explorer` in `~/.copilot/mcp-config.json` |
+| anything else | copy the JSON from *More ▸ Copy MCP config JSON* |
+
 ## Restricting file access
 
 ```
@@ -56,6 +69,12 @@ EDB_EXPLORER_ALLOWED_PATHS=/cases/001/evidence:/mnt/images edb-explorer mcp   # 
 | `column_statistics` | nulls, distinct, min/max/mean, top values, timestamp kind + range per column | `db`, `table`, `columns`, `max_rows`, `top` |
 | `detect_timestamps` | which columns are timestamps and their encoding | `db`, `table` |
 | `timeline` | events from every timestamp column across databases, sorted | `db[]`, `tables`, `start`, `end`, `limit`, `output_path` |
+| `exchange_mailboxes` | mailboxes of an Exchange database | `db`, `include_system` |
+| `exchange_folders` | folder tree with counts | `db`, `mailbox` |
+| `exchange_messages` | message list (subject, sender, recipients, dates) | `db`, `mailbox`, `folder_id` / `folder_name`, `text`, `limit`, `offset` |
+| `exchange_message` | headers, body, recipients, attachments, MAPI properties | `db`, `mailbox`, `document_id` |
+| `exchange_export` | eml / html / txt / json files per message | `db`, `output_dir`, `mailbox`, `folder_id`, `document_ids`, `format` |
+| `exchange_save_attachment` | write one attachment to disk | `db`, `mailbox`, `inid`, `output_path` |
 
 Every table argument accepts the real name, a case-insensitive match, or the friendly display
 name (`"Network Data Usage"` for `{973F5D5C-1D90-4944-BE8E-24B94231A174}`). `db` accepts the id,

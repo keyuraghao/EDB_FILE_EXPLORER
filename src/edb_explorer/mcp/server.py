@@ -68,6 +68,9 @@ Typical workflow:
   7. Analysis: `database_summary` (start here), `run_sql` (any format, cross-database joins), `list_views` /
      `run_view` (Chrome history, iOS messages, SRUM network usage ...), `column_statistics`, `detect_timestamps`,
      `timeline` (every timestamp across every table, sorted).
+  8. Exchange mailbox databases: `exchange_mailboxes` -> `exchange_folders` -> `exchange_messages` ->
+     `exchange_message` (headers, body, recipients, attachments, MAPI properties) -> `exchange_export` (eml/html/txt/json),
+     `exchange_save_attachment`.
 
 Binary values are decoded heuristically (UTF-16 text, SIDs, GUIDs, else 0x-hex).  `DateTime` columns are
 converted to ISO-8601 UTC when they hold an OLE date or FILETIME.  Values longer than `max_value_length`
@@ -702,6 +705,160 @@ def build_server(session: Session | None = None) -> Any:
                 for k in KINDS
             ]
         }
+
+    # ------------------------------------------------------------------ #
+    # Exchange mailboxes
+    # ------------------------------------------------------------------ #
+    def _store(db: str) -> Any:
+        from edb_explorer.core.exchange import ExchangeStore
+
+        return ExchangeStore(session.get(db))
+
+    @server.tool(annotations=READ_ONLY)
+    def exchange_mailboxes(db: str, include_system: bool = False) -> dict[str, Any]:
+        """List the mailboxes of an Exchange mailbox database (.edb): owner, message counts, last logon.
+
+        Args:
+            db: Database id, file name or path (must be an Exchange mailbox database).
+            include_system: Include HealthMailbox / SystemMailbox / archive mailboxes.
+        """
+        try:
+            store = _store(db)
+            boxes = store.mailboxes(include_system)
+        except EdbExplorerError as exc:
+            return _err(exc)
+        return {"database": store.db.id, "count": len(boxes), "mailboxes": [b.to_dict() for b in boxes]}
+
+    @server.tool(annotations=READ_ONLY)
+    def exchange_folders(db: str, mailbox: int) -> dict[str, Any]:
+        """Folder tree of a mailbox with item counts (Inbox, Sent Items, Deleted Items, ...)."""
+        try:
+            store = _store(db)
+            folders = store.folders(mailbox)
+        except EdbExplorerError as exc:
+            return _err(exc)
+        return {"mailbox": mailbox, "count": len(folders), "folders": [f.to_dict() for f in folders]}
+
+    @server.tool(annotations=READ_ONLY)
+    def exchange_messages(
+        db: str,
+        mailbox: int,
+        folder_id: str | None = None,
+        folder_name: str | None = None,
+        text: str | None = None,
+        include_hidden: bool = False,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """List messages of a mailbox (newest first): subject, sender, recipients, dates, attachments flag.
+
+        Args:
+            db: Database id, file name or path.
+            mailbox: Mailbox number from exchange_mailboxes.
+            folder_id: Restrict to one folder (id from exchange_folders).
+            folder_name: Restrict to a folder by display name or path (e.g. "Inbox").
+            text: Case-insensitive substring matched against subject, sender and recipients.
+            include_hidden: Include hidden (FAI) items.
+            limit: Maximum messages (1-1000).
+            offset: Messages to skip.
+        """
+        try:
+            store = _store(db)
+            if folder_name and not folder_id:
+                match = next(
+                    (
+                        f
+                        for f in store.folders(mailbox)
+                        if folder_name.lower() in (f.display_name.lower(), f.path.lower())
+                    ),
+                    None,
+                )
+                if match is None:
+                    return {
+                        "error": "FolderNotFound",
+                        "message": f"No folder named {folder_name!r} in mailbox {mailbox}",
+                    }
+                folder_id = match.folder_id
+            msgs = store.messages(mailbox, folder_id, include_hidden, text, _clamp_limit(limit), max(0, offset))
+        except EdbExplorerError as exc:
+            return _err(exc)
+        return {
+            "mailbox": mailbox,
+            "folder_id": folder_id,
+            "returned": len(msgs),
+            "messages": [m.to_dict() for m in msgs],
+        }
+
+    @server.tool(annotations=READ_ONLY)
+    def exchange_message(
+        db: str, mailbox: int, document_id: int, include_body: bool = True, max_body_length: int = 20000
+    ) -> dict[str, Any]:
+        """Full message: headers, decoded body (text/HTML), recipients, attachments and every MAPI property.
+
+        Args:
+            db: Database id, file name or path.
+            mailbox: Mailbox number.
+            document_id: Message document id from exchange_messages.
+            include_body: Include body_text / body_html.
+            max_body_length: Truncate bodies longer than this.
+        """
+        try:
+            d = _store(db).message(mailbox, document_id)
+        except EdbExplorerError as exc:
+            return _err(exc)
+        out = d.to_dict(include_body)
+        for key in ("body_text", "body_html"):
+            v = out.get(key)
+            if isinstance(v, str) and len(v) > max_body_length:
+                out[key] = v[:max_body_length] + f"… [+{len(v) - max_body_length} chars]"
+        return out
+
+    @server.tool(annotations=WRITES_FILES)
+    def exchange_export(
+        db: str,
+        output_dir: str,
+        mailbox: int,
+        folder_id: str | None = None,
+        document_ids: list[int] | None = None,
+        format: str = "eml",
+        text: str | None = None,
+        attachments: bool = True,
+        limit: int = 10000,
+    ) -> dict[str, Any]:
+        """Export messages (a whole mailbox, one folder, or specific ids) as eml / html / txt / json files
+        into output_dir, one file per message under <mailbox>/<folder path>/, attachments alongside.
+        """
+        from edb_explorer.core.exchange.export import export_messages
+
+        try:
+            store = _store(db)
+            msgs = store.messages(mailbox, folder_id, include_hidden=False, text=text, limit=limit)
+            if document_ids:
+                wanted = set(document_ids)
+                msgs = [m for m in msgs if m.document_id in wanted]
+            paths = export_messages(store, msgs, output_dir, format, attachments=attachments)
+        except (EdbExplorerError, OSError, ValueError) as exc:
+            return _err(exc)
+        return {
+            "output_dir": str(Path(output_dir).resolve()),
+            "format": format,
+            "messages_written": len(paths),
+            "files": [str(p) for p in paths[:200]],
+        }
+
+    @server.tool(annotations=WRITES_FILES)
+    def exchange_save_attachment(db: str, mailbox: int, inid: int, output_path: str) -> dict[str, Any]:
+        """Save one attachment (by its inid from exchange_message) to disk."""
+        try:
+            name, data = _store(db).attachment_content(mailbox, inid)
+            target = Path(output_path)
+            if target.is_dir():
+                target = target / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        except (EdbExplorerError, OSError) as exc:
+            return _err(exc)
+        return {"name": name, "size": len(data), "output_path": str(target.resolve())}
 
     @server.tool(name="interpret_timestamp", annotations=READ_ONLY)
     def interpret_timestamp_tool(value: str) -> dict[str, Any]:
