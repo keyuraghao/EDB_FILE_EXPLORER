@@ -58,10 +58,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/keyuraghao/edb-explorer"
-Repository = "https://github.com/keyuraghao/edb-explorer"
-Issues = "https://github.com/keyuraghao/edb-explorer/issues"
-Changelog = "https://github.com/keyuraghao/edb-explorer/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/keyuraghao/EDB_FILE_EXPLORER"
+Repository = "https://github.com/keyuraghao/EDB_FILE_EXPLORER"
+Issues = "https://github.com/keyuraghao/EDB_FILE_EXPLORER/issues"
+Changelog = "https://github.com/keyuraghao/EDB_FILE_EXPLORER/blob/main/CHANGELOG.md"
 
 [project.scripts]
 edb-explorer = "edb_explorer.cli:main"

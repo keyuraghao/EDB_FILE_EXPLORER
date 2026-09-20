@@ -168,7 +168,7 @@ class MainWindow(QMainWindow):
         self._act(
             help_menu,
             "Project on &GitHub",
-            lambda: QDesktopServices.openUrl(QUrl("https://github.com/keyuraghao/edb-explorer")),
+            lambda: QDesktopServices.openUrl(QUrl("https://github.com/keyuraghao/EDB_FILE_EXPLORER")),
         )
         help_menu.addSeparator()
         self._act(help_menu, "&About", lambda: AboutDialog(self).exec())

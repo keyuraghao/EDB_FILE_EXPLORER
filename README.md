@@ -12,8 +12,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/keyuraghao/edb-explorer/actions/workflows/ci.yml"><img src="https://github.com/keyuraghao/edb-explorer/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/keyuraghao/edb-explorer/releases"><img src="https://img.shields.io/github/v/release/keyuraghao/edb-explorer?include_prereleases" alt="Release"></a>
+  <a href="https://github.com/keyuraghao/EDB_FILE_EXPLORER/actions/workflows/ci.yml"><img src="https://github.com/keyuraghao/EDB_FILE_EXPLORER/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/keyuraghao/EDB_FILE_EXPLORER/releases"><img src="https://img.shields.io/github/v/release/keyuraghao/EDB_FILE_EXPLORER?include_prereleases" alt="Release"></a>
   <img src="https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue" alt="Python">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-lightgrey" alt="Platforms">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT"></a>
@@ -94,7 +94,7 @@ Everything is **strictly read-only** - the tool never writes to a database file.
 
 ### Binaries (no Python needed)
 
-Download the archive for your OS from the [releases page](https://github.com/keyuraghao/edb-explorer/releases),
+Download the archive for your OS from the [releases page](https://github.com/keyuraghao/EDB_FILE_EXPLORER/releases),
 extract it, and run `EDB-Explorer` (GUI) or `edb-explorer` (CLI + MCP).
 
 ### From PyPI / source
@@ -104,7 +104,7 @@ pip install "edb-explorer[all]"          # GUI + MCP
 pip install "edb-explorer[mcp]"          # headless: CLI + MCP server only (no Qt)
 
 # or from a checkout
-git clone https://github.com/keyuraghao/edb-explorer && cd edb-explorer
+git clone https://github.com/keyuraghao/EDB_FILE_EXPLORER && cd edb-explorer
 uv sync --all-extras && uv run edb-explorer gui
 ```
 
@@ -177,7 +177,7 @@ Claude Desktop / Cursor (`claude_desktop_config.json`, `.cursor/mcp.json`):
 Docker (headless, Streamable HTTP on `:8765`, evidence mounted read-only):
 
 ```bash
-docker run --rm -p 8765:8765 -v /cases/001/evidence:/evidence:ro ghcr.io/keyuraghao/edb-explorer
+docker run --rm -p 8765:8765 -v /cases/001/evidence:/evidence:ro ghcr.io/keyuraghao/EDB_FILE_EXPLORER
 ```
 
 **Tools exposed** - `open_database`, `scan_directory`, `list_databases`, `close_database`,

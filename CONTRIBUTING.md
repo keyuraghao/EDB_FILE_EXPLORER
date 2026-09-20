@@ -6,7 +6,7 @@ improvements are all welcome.
 ## Development setup
 
 ```bash
-git clone https://github.com/keyuraghao/edb-explorer
+git clone https://github.com/keyuraghao/EDB_FILE_EXPLORER
 cd edb-explorer
 uv sync --all-extras          # creates .venv with GUI, MCP and dev dependencies
 uv run pre-commit install     # optional: lint on commit
