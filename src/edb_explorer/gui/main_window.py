@@ -62,7 +62,7 @@ FILE_FILTER = (
     f"All supported databases ({_ALL_EXT});;"
     "ESE (*.edb *.dit *.dat *.jtx *.vol);;SQLite (*.db *.sqlite *.sqlite3 *.sqlitedb *.storedata);;"
     "LevelDB (CURRENT MANIFEST-* *.ldb *.log);;Access (*.mdb *.accdb);;dBase (*.dbf);;Berkeley DB (*.db *.bdb);;"
-    "SQL dumps (*.sql);;BSON dumps (*.bson);;All files (*)"
+    "SQL dumps (*.sql);;BSON dumps (*.bson);;Windows Event Log (*.evtx);;All files (*)"
 )
 MAX_RECENT = 12
 

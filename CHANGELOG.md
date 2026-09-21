@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-21
+
+### Added
+- **Windows Event Log (`.evtx`) support**: Security, System, Application, Sysmon and any other event log opens
+  as a native format (detected by its `ElfFile` signature). Records are presented as one **table per channel**,
+  with the `System` fields (record id, `TimeCreated`, EventID, level, provider, channel, computer, process/thread,
+  user SID …) as stable leading columns and every `EventData` / `UserData` field flattened into its own sortable,
+  searchable column. `TimeCreated` feeds the timeline and statistics like any other timestamp; the header exposes
+  the format version, chunk count, next record id and the dirty/full flags. Profiles for the **Security**,
+  **System**, **Application** and **Sysmon** channels add ready-made analysis views (event-ID summary, successful
+  and failed logons, special-privilege assignments, process creation). Parsing uses the `evtx` Rust extension, so
+  a 134 MB / 181k-event `Security.evtx` opens in a few seconds.
+
 ### Changed
 - README screenshots regenerated from a neutral evidence tree (no user names, home directories or case
   identifiers); the embedded-agent screenshot was dropped.

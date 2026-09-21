@@ -78,6 +78,7 @@ _KIND_STYLE = {
     "bsddb": ("#6d28d9", "B"),
     "sqldump": ("#4b5563", "Q"),
     "bson": ("#1f7a3d", "M"),
+    "evtx": ("#8a4b08", "W"),
     "mailbox": ("#c05621", "@"),
 }
 _kind_cache: dict[str, QIcon] = {}

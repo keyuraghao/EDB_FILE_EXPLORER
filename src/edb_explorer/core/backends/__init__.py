@@ -49,6 +49,12 @@ KINDS: tuple[KindInfo, ...] = (
         (".sql",),
     ),
     KindInfo("bson", "BSON dump (mongodump)", "MongoDB collection dumps", (".bson",)),
+    KindInfo(
+        "evtx",
+        "Windows Event Log (EVTX)",
+        "Security.evtx, System.evtx, Application.evtx, Sysmon and other Windows event logs",
+        (".evtx",),
+    ),
 )
 KIND_NAMES = {k.id: k.name for k in KINDS}
 
@@ -77,6 +83,10 @@ def detect_kind(path: str | os.PathLike[str]) -> str | None:
 
     if head.startswith(SQLITE_MAGIC):
         return "sqlite"
+    from edb_explorer.core.backends.evtx import EVTX_MAGIC
+
+    if head.startswith(EVTX_MAGIC):
+        return "evtx"
     from edb_explorer.core.backends.access import ACCESS_MAGICS
 
     if head[4:19] in ACCESS_MAGICS:
@@ -150,6 +160,10 @@ def open_backend(path: str | os.PathLike[str], kind: str | None = None) -> Backe
         from edb_explorer.core.backends.bsondump import BsonDumpBackend
 
         return BsonDumpBackend(p)
+    if kind == "evtx":
+        from edb_explorer.core.backends.evtx import EvtxBackend
+
+        return EvtxBackend(p)
     raise InvalidDatabaseError(f"Unknown backend kind {kind!r}")
 
 

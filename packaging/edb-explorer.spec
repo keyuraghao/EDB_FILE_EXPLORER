@@ -14,7 +14,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
 
 ROOT = Path(SPECPATH).resolve().parent  # noqa: F821 - SPECPATH is injected by PyInstaller
 SRC = ROOT / "src"
@@ -35,6 +35,7 @@ hiddenimports = (
     + collect_submodules("access_parser")
     + collect_submodules("dbfread")
     + collect_submodules("bson")
+    + collect_submodules("evtx")
     + ["cramjam", "construct", "tabulate", "pyte", "wcwidth"]
     + (["winpty"] if sys.platform.startswith("win") else [])
     + collect_submodules("edb_explorer")
@@ -45,6 +46,8 @@ hiddenimports = (
     + collect_submodules("docx")
     + ["typer", "rich", "anyio", "pydantic", "starlette", "uvicorn"]
 )
+# The evtx parser is a compiled Rust extension (evtx/_native*.so|pyd); bundle its shared library explicitly.
+binaries = collect_dynamic_libs("evtx")
 datas = (
     [(str(RES), "edb_explorer/resources")]
     + collect_data_files("docx")
@@ -65,6 +68,7 @@ gui_a = Analysis(
     [str(SRC / "edb_explorer" / "gui" / "app.py")],
     pathex=[str(SRC)],
     hiddenimports=hiddenimports,
+    binaries=binaries,
     datas=datas,
     excludes=excludes,
     noarchive=False,
@@ -73,6 +77,7 @@ cli_a = Analysis(
     [str(SRC / "edb_explorer" / "__main__.py")],
     pathex=[str(SRC)],
     hiddenimports=hiddenimports,
+    binaries=binaries,
     datas=datas,
     excludes=excludes,
     noarchive=False,

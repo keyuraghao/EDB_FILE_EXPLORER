@@ -49,7 +49,8 @@ Everything is **strictly read-only** - the tool never writes to an evidence file
 
 **Any database, one UI**
 - ESE / JET Blue, SQLite (WAL sidecars merged, SQLCipher-aware parser), LevelDB directories, Access `.mdb`/`.accdb`,
-  dBase `.dbf` (incl. soft-deleted records), Berkeley DB, `mysqldump` / `pg_dump` / `sqlite .dump` text, `mongodump` `.bson`.
+  dBase `.dbf` (incl. soft-deleted records), Berkeley DB, `mysqldump` / `pg_dump` / `sqlite .dump` text, `mongodump` `.bson`,
+  Windows Event Logs `.evtx` (Security / System / Application / Sysmon, one table per channel).
 - Formats are detected by signature, not extension; scan a folder or a mounted image and everything supported is listed.
 - Open many databases at once (`Ctrl+O`), drag-and-drop files or folders, welcome screen with **Open / Recent / Scan**
   buttons, a **Tasks** panel showing a progress bar for every file being opened or table being loaded while you keep
@@ -137,6 +138,7 @@ case ID / analyst / notes → **HTML, PDF, DOCX, Markdown, XLSX, TXT, JSON**.
 | Berkeley DB | RPM `Packages`, `cert8.db` / `key3.db`, sendmail maps | btree / hash / recno |
 | SQL dump | `mysqldump`, `pg_dump` (incl. `COPY`), `sqlite .dump` | loaded into SQLite, then queryable |
 | BSON dump | `mongodump` collections | nested documents flattened to JSON |
+| Windows Event Log | `Security.evtx`, `System.evtx`, `Application.evtx`, `Microsoft-Windows-Sysmon%4Operational.evtx` | one table per channel; `System` fields + flattened `EventData`/`UserData` columns; logon / privilege / process views |
 
 The full list of profiles, their signature tables and views is in [docs/formats.md](docs/formats.md).
 
@@ -270,7 +272,7 @@ An agent conversation typically looks like:
 ```
 src/edb_explorer/
 ├── core/                 UI-agnostic engine (no Qt)
-│   ├── backends/         one module per format: ese, sqlite, leveldb, access, dbf, bsddb, sqldump, bsondump
+│   ├── backends/         one module per format: ese, sqlite, leveldb, access, dbf, bsddb, sqldump, bsondump, evtx
 │   │   └── __init__.py   signature detection + registry
 │   ├── database.py       Database: thread-safe read-only wrapper over a backend
 │   ├── session.py        many open databases, stable ids, path allow-list, directory scan
@@ -325,7 +327,8 @@ release process, and [SECURITY.md](SECURITY.md) for MCP hardening notes.
 - [libesedb](https://github.com/libyal/libesedb) documentation by Joachim Metz for the ESE format reference;
   Google's LevelDB `log_format.md` / `table_format.md` for the LevelDB reader.
 - [access-parser](https://github.com/claroty/access_parser), [dbfread](https://github.com/olemb/dbfread),
-  [cramjam](https://github.com/milesgranger/cramjam), [bson](https://github.com/py-bson/bson).
+  [cramjam](https://github.com/milesgranger/cramjam), [bson](https://github.com/py-bson/bson),
+  [evtx](https://github.com/omerbenamram/pyevtx-rs) by Omer Ben-Amram for the Windows Event Log parser.
 - Built with [PySide6](https://www.qt.io/qt-for-python), [Typer](https://typer.tiangolo.com),
   [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk), openpyxl, reportlab and python-docx.
 

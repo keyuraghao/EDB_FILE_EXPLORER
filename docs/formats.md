@@ -14,6 +14,7 @@
 | `bsddb` | Berkeley DB | RPM databases, sendmail/postfix maps, older Firefox cert stores | `.db` `.bdb` |
 | `sqldump` | SQL dump (MySQL / PostgreSQL / SQLite) | mysqldump, pg_dump and sqlite .dump text exports | `.sql` |
 | `bson` | BSON dump (mongodump) | MongoDB collection dumps | `.bson` |
+| `evtx` | Windows Event Log (EVTX) | Security.evtx, System.evtx, Application.evtx, Sysmon and other Windows event logs | `.evtx` |
 
 Files are recognised by signature, not extension. A LevelDB store is a *directory*; opening any file
 inside it (`CURRENT`, `*.ldb`, `*.log`) opens the whole store.
@@ -33,6 +34,11 @@ names, the timestamp encoding of known columns and ready-made **artifact views**
 | **IE / Edge WebCache (WebCacheV01.dat)**<br>Internet Explorer / legacy Edge browsing history, cache, cookies and downloads. | ese | `Containers`, `LeakFiles` | `containers` |
 | **Windows Search Index (Windows.edb)**<br>Windows Search indexer: indexed file metadata, paths and content snippets. | ese | `SystemIndex_PropertyStore`, `SystemIndex_Gthr` | - |
 | **Windows Update DataStore (DataStore.edb)**<br>Windows Update history, files and update metadata. | ese | `tbFiles`, `tbUpdates` | - |
+| **Windows Security event log**<br>Windows Security audit log (logons, privilege use, account and policy changes). | evtx | `Security` | `event_summary`, `logons`, `failed_logons`, `special_privileges`, `process_creation` |
+| **Windows System event log**<br>Windows System event log (service, driver and boot/shutdown events). | evtx | `System` | `event_summary` |
+| **Windows Application event log**<br>Windows Application event log (per-application informational, warning and error events). | evtx | `Application` | `errors` |
+| **Sysmon Operational log**<br>Microsoft Sysinternals Sysmon log (process, network, image-load and registry telemetry). | evtx | `Microsoft-Windows-Sysmon/Operational` | `event_summary` |
+| **Windows Event Log (EVTX)**<br>A Windows event log of unknown channel (one table per channel; EventData fields are columns). | evtx | (format only) | - |
 | **Windows Timeline (ActivitiesCache.db)**<br>Windows 10 Timeline: applications used, documents opened, clipboard, per-session focus. Unix seconds. | sqlite | `Activity`, `ActivityOperation`, `Activity_PackageId` | `activities`, `apps` |
 | **Windows Notifications (wpndatabase.db)**<br>Toast/tile notifications received by the user. FILETIME timestamps. | sqlite | `Notification`, `NotificationHandler` | `notifications` |
 

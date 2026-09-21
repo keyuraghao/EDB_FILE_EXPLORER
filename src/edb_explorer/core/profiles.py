@@ -273,6 +273,120 @@ PROFILES: tuple[Profile, ...] = (
         signature_tables=("HashCatNameTable", "CatalogEntries"),
         file_hints=("catdb",),
     ),
+    Profile(
+        id="evtx_security",
+        name="Windows Security event log",
+        description="Windows Security audit log (logons, privilege use, account and policy changes).",
+        signature_tables=("Security",),
+        table_descriptions={"Security": "Security audit events (each row is one event; EventData fields are columns)."},
+        file_hints=("security.evtx",),
+        kinds=("evtx",),
+        platform="windows",
+        any_of=True,
+        views=(
+            ArtifactView(
+                "event_summary",
+                "Event ID summary",
+                "How many of each EventID, with the time span they cover",
+                "SELECT EventID, COUNT(*) AS count, MIN(TimeCreated) AS first_seen, MAX(TimeCreated) AS last_seen "
+                "FROM {t:Security} GROUP BY EventID ORDER BY count DESC",
+            ),
+            ArtifactView(
+                "logons",
+                "Successful logons (4624)",
+                "Interactive / network / RDP logons resolved to account, logon type and source",
+                "SELECT TimeCreated, TargetUserName, TargetDomainName, LogonType, IpAddress, WorkstationName, "
+                "SubjectUserName, LogonProcessName, AuthenticationPackageName FROM {t:Security} "
+                "WHERE EventID = 4624 ORDER BY TimeCreated DESC",
+            ),
+            ArtifactView(
+                "failed_logons",
+                "Failed logons (4625)",
+                "Failed authentication attempts with target account and source address",
+                "SELECT TimeCreated, TargetUserName, TargetDomainName, LogonType, IpAddress, WorkstationName, Status, "
+                "SubStatus FROM {t:Security} WHERE EventID = 4625 ORDER BY TimeCreated DESC",
+            ),
+            ArtifactView(
+                "special_privileges",
+                "Special privileges assigned (4672)",
+                "Accounts granted administrator-equivalent privileges at logon",
+                "SELECT TimeCreated, SubjectUserName, SubjectDomainName, SubjectLogonId, PrivilegeList "
+                "FROM {t:Security} WHERE EventID = 4672 ORDER BY TimeCreated DESC",
+            ),
+            ArtifactView(
+                "process_creation",
+                "Process creation (4688)",
+                "New processes with command line and parent (requires command-line auditing)",
+                "SELECT TimeCreated, SubjectUserName, NewProcessName, CommandLine, ParentProcessName "
+                "FROM {t:Security} WHERE EventID = 4688 ORDER BY TimeCreated DESC",
+            ),
+        ),
+    ),
+    Profile(
+        id="evtx_system",
+        name="Windows System event log",
+        description="Windows System event log (service, driver and boot/shutdown events).",
+        signature_tables=("System",),
+        file_hints=("system.evtx",),
+        kinds=("evtx",),
+        platform="windows",
+        any_of=True,
+        views=(
+            ArtifactView(
+                "event_summary",
+                "Event ID summary",
+                "How many of each EventID/provider, with the time span they cover",
+                "SELECT Provider, EventID, COUNT(*) AS count, MIN(TimeCreated) AS first_seen, "
+                "MAX(TimeCreated) AS last_seen FROM {t:System} GROUP BY Provider, EventID ORDER BY count DESC",
+            ),
+        ),
+    ),
+    Profile(
+        id="evtx_application",
+        name="Windows Application event log",
+        description="Windows Application event log (per-application informational, warning and error events).",
+        signature_tables=("Application",),
+        file_hints=("application.evtx",),
+        kinds=("evtx",),
+        platform="windows",
+        any_of=True,
+        views=(
+            ArtifactView(
+                "errors",
+                "Errors and warnings",
+                "Application error/warning events (Level <= 3), newest first",
+                "SELECT TimeCreated, Provider, EventID, LevelName, Computer FROM {t:Application} "
+                "WHERE Level > 0 AND Level <= 3 ORDER BY TimeCreated DESC",
+            ),
+        ),
+    ),
+    Profile(
+        id="evtx_sysmon",
+        name="Sysmon Operational log",
+        description="Microsoft Sysinternals Sysmon log (process, network, image-load and registry telemetry).",
+        signature_tables=("Microsoft-Windows-Sysmon/Operational",),
+        file_hints=("sysmon",),
+        kinds=("evtx",),
+        platform="windows",
+        any_of=True,
+        views=(
+            ArtifactView(
+                "event_summary",
+                "Event ID summary",
+                "Sysmon events grouped by EventID (1=process, 3=network, 7=image load, 11=file, 13=registry ...)",
+                "SELECT EventID, COUNT(*) AS count, MIN(TimeCreated) AS first_seen, MAX(TimeCreated) AS last_seen "
+                "FROM {t:Microsoft-Windows-Sysmon/Operational} GROUP BY EventID ORDER BY count DESC",
+            ),
+        ),
+    ),
+    Profile(
+        id="evtx",
+        name="Windows Event Log (EVTX)",
+        description="A Windows event log of unknown channel (one table per channel; EventData fields are columns).",
+        signature_tables=(),
+        kinds=("evtx",),
+        platform="windows",
+    ),
 )
 
 GENERIC = Profile(

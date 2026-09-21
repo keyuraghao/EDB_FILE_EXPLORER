@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "edb-explorer"
-version = "0.4.0"
+version = "0.5.0"
 description = "Cross-platform GUI, CLI and MCP server for forensic database analysis: ESE (ntds.dit, SRUDB, Exchange), SQLite (iOS/Android/browsers/macOS/Windows apps), LevelDB, Access, DBF, Berkeley DB and SQL/BSON dumps - with SQL, timelines and reports."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -13,6 +13,7 @@ authors = [{ name = "Keyur Aghao" }]
 keywords = [
   "ese", "esedb", "edb", "ntds", "srum", "srudb", "exchange", "webcache", "sqlite", "leveldb", "indexeddb",
   "ios", "android", "chrome", "firefox", "safari", "knowledgec", "access", "dbf", "berkeley-db", "mysqldump",
+  "evtx", "event-log", "eventlog", "sysmon", "windows-event-log",
   "timeline", "forensics", "dfir", "mcp", "model-context-protocol", "pyside6",
 ]
 classifiers = [
@@ -41,6 +42,7 @@ dependencies = [
   "access-parser>=0.0.6",
   "dbfread>=2.0.7",
   "bson>=0.5.10",
+  "evtx>=0.8",
   "cramjam>=2.8",
   "typer>=0.12",
   "rich>=13.7",

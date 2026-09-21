@@ -53,7 +53,7 @@ INSTRUCTIONS = f"""\
 {__app_name__} {__version__} - read-only access to forensic databases of many formats: Microsoft ESE
 (ntds.dit, SRUDB.dat, Exchange .edb, WebCacheV01.dat, Windows.edb, UAL), SQLite (iOS/Android apps, Chrome/Firefox/Safari,
 macOS knowledgeC, Windows ActivitiesCache ...), LevelDB (Chromium/Electron IndexedDB & Local Storage), Access, dBase,
-Berkeley DB, and mysqldump/pg_dump/mongodump exports. ~50 application profiles decode timestamps and provide
+Berkeley DB, mysqldump/pg_dump/mongodump exports, and Windows Event Logs (.evtx). ~50 application profiles decode timestamps and provide
 ready-made analysis views.
 
 Typical workflow:
@@ -98,7 +98,7 @@ def build_server(session: Session | None = None) -> Any:
     def open_database(path: str, id: str | None = None) -> dict[str, Any]:
         """Open a database file read-only and return its metadata. Any supported format is auto-detected:
         ESE (.edb/.dit/.dat), SQLite (phones, browsers, macOS/Windows apps), LevelDB directories (Chromium/Electron),
-        Access (.mdb/.accdb), dBase (.dbf), Berkeley DB, SQL dumps (.sql) and BSON dumps (.bson).
+        Access (.mdb/.accdb), dBase (.dbf), Berkeley DB, SQL dumps (.sql), BSON dumps (.bson) and Windows Event Logs (.evtx).
 
         Args:
             path: Absolute or ~-relative path to the database file (or LevelDB directory).

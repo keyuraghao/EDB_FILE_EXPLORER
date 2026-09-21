@@ -33,6 +33,7 @@ ALL_EXTENSIONS = ESE_EXTENSIONS | frozenset(
         ".sql",
         ".bson",
         ".ldb",
+        ".evtx",
     }
 )
 _SKIP_SUFFIXES = (".log", ".chk", ".jrs", "-wal", "-shm", "-journal", ".dbt", ".fpt")

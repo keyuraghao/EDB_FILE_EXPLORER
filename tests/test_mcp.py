@@ -133,7 +133,7 @@ def test_analysis_tools(server: Any, fake_edb: Path, tmp_path: Path) -> None:
     }
     tl = _call(server, "timeline", limit=3, output_path=str(tmp_path / "tl.csv"))
     assert tl["count"] == 25 and tl["rows_written"] == 25 and len(tl["events"]) == 3
-    assert len(_call(server, "list_formats")["formats"]) == 8
+    assert len(_call(server, "list_formats")["formats"]) == 9
 
 
 def test_exchange_tools(server: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
