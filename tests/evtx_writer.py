@@ -14,7 +14,16 @@ _EPOCH = datetime(1601, 1, 1, tzinfo=timezone.utc)
 
 # BXML value types
 T_NULL, T_STRING, T_UINT8, T_UINT16, T_UINT32, T_UINT64, T_GUID, T_FILETIME, T_SID, T_HEX64 = (
-    0x00, 0x01, 0x04, 0x06, 0x08, 0x0A, 0x0F, 0x11, 0x13, 0x15,
+    0x00,
+    0x01,
+    0x04,
+    0x06,
+    0x08,
+    0x0A,
+    0x0F,
+    0x11,
+    0x13,
+    0x15,
 )
 
 
@@ -107,13 +116,25 @@ def _encode_value(vtype: int, v: Any) -> bytes:
     if vtype == T_SID:
         parts = [int(x) for x in v.split("-")[1:]]
         rev, auth, subs = parts[0], parts[1], parts[2:]
-        return struct.pack("<BB", rev, len(subs)) + auth.to_bytes(6, "big") + b"".join(struct.pack("<I", s) for s in subs)
+        return (
+            struct.pack("<BB", rev, len(subs)) + auth.to_bytes(6, "big") + b"".join(struct.pack("<I", s) for s in subs)
+        )
     raise ValueError(vtype)
 
 
-def build_record(record_id: int, when: datetime, system: dict[str, Any], data: dict[str, Any], *,
-                 channel: str, provider: str, provider_guid: str, chunk_offset: int,
-                 user_data: bool = False, unnamed: list[str] | None = None) -> bytes:
+def build_record(
+    record_id: int,
+    when: datetime,
+    system: dict[str, Any],
+    data: dict[str, Any],
+    *,
+    channel: str,
+    provider: str,
+    provider_guid: str,
+    chunk_offset: int,
+    user_data: bool = False,
+    unnamed: list[str] | None = None,
+) -> bytes:
     """One EVTX record. ``chunk_offset`` is where this record will start inside its chunk."""
     subs: list[tuple[int, Any]] = []  # (type, value) in substitution index order
 
@@ -137,11 +158,19 @@ def build_record(record_id: int, when: datetime, system: dict[str, Any], data: d
         {"name": "TimeCreated", "attrs": [("SystemTime", S(T_FILETIME, when))]},
         {"name": "EventRecordID", "children": [S(T_UINT64, record_id)]},
         {"name": "Correlation", "attrs": [("ActivityID", S(T_NULL, None))]},
-        {"name": "Execution", "attrs": [("ProcessID", S(T_UINT32, sysid.get("ProcessID", 592))),
-                                        ("ThreadID", S(T_UINT32, sysid.get("ThreadID", 1000)))]},
+        {
+            "name": "Execution",
+            "attrs": [
+                ("ProcessID", S(T_UINT32, sysid.get("ProcessID", 592))),
+                ("ThreadID", S(T_UINT32, sysid.get("ThreadID", 1000))),
+            ],
+        },
         {"name": "Channel", "children": [S(T_STRING, channel)]},
         {"name": "Computer", "children": [S(T_STRING, sysid.get("Computer", "DC01.corp.local"))]},
-        {"name": "Security", "attrs": [("UserID", S(T_SID, sysid["UserID"]) if sysid.get("UserID") else S(T_NULL, None))]},
+        {
+            "name": "Security",
+            "attrs": [("UserID", S(T_SID, sysid["UserID"]) if sysid.get("UserID") else S(T_NULL, None))],
+        },
     ]
     data_children: list[Any] = []
     for k, v in data.items():
@@ -155,13 +184,26 @@ def build_record(record_id: int, when: datetime, system: dict[str, Any], data: d
     for v in unnamed or []:
         data_children.append({"name": "Data", "children": [S(T_STRING, v)]})
     if user_data:
-        payload = {"name": "UserData", "children": [{"name": "EventXML", "attrs": [("xmlns", "Event_NS")],
-                   "children": [{"name": k, "children": [S(T_STRING if not isinstance(v, int) else T_UINT32, v)]}
-                                for k, v in data.items()]}]}
+        payload = {
+            "name": "UserData",
+            "children": [
+                {
+                    "name": "EventXML",
+                    "attrs": [("xmlns", "Event_NS")],
+                    "children": [
+                        {"name": k, "children": [S(T_STRING if not isinstance(v, int) else T_UINT32, v)]}
+                        for k, v in data.items()
+                    ],
+                }
+            ],
+        }
     else:
         payload = {"name": "EventData", "children": data_children}
-    b.element("Event", [("xmlns", "http://schemas.microsoft.com/win/2004/08/events/event")],
-              [{"name": "System", "children": sys_children}, payload])
+    b.element(
+        "Event",
+        [("xmlns", "http://schemas.microsoft.com/win/2004/08/events/event")],
+        [{"name": "System", "children": sys_children}, payload],
+    )
     fragment = b"\x0f\x01\x01\x00" + bytes(b.buf) + b"\x00"
     definition = struct.pack("<I", 0) + uuid.uuid4().bytes_le + struct.pack("<I", len(fragment)) + fragment
     tpl_token = b"\x0c\x01" + struct.pack("<II", 0x1234, definition_at)
@@ -188,20 +230,50 @@ def build_chunk(records: list[dict[str, Any]], first_nr: int) -> bytes:
         ids.append(r["record_id"])
     free = 512 + len(data)
     hdr = bytearray(512)
-    struct.pack_into("<8sQQQQIIII", hdr, 0, b"ElfChnk\x00", first_nr, first_nr + len(ids) - 1, ids[0], ids[-1],
-                     128, last_off, free, zlib.crc32(bytes(data)))
+    struct.pack_into(
+        "<8sQQQQIIII",
+        hdr,
+        0,
+        b"ElfChnk\x00",
+        first_nr,
+        first_nr + len(ids) - 1,
+        ids[0],
+        ids[-1],
+        128,
+        last_off,
+        free,
+        zlib.crc32(bytes(data)),
+    )
     struct.pack_into("<I", hdr, 120, 0)  # flags
     struct.pack_into("<I", hdr, 124, zlib.crc32(bytes(hdr[:120]) + bytes(hdr[128:512])))
     chunk = bytes(hdr) + bytes(data)
     return chunk + b"\x00" * (CHUNK_SIZE - len(chunk))
 
 
-def build_file(chunks: list[bytes], *, first_chunk: int = 0, last_chunk: int | None = None,
-               next_record_id: int = 1, dirty: bool = False, trailing_empty: int = 0) -> bytes:
+def build_file(
+    chunks: list[bytes],
+    *,
+    first_chunk: int = 0,
+    last_chunk: int | None = None,
+    next_record_id: int = 1,
+    dirty: bool = False,
+    trailing_empty: int = 0,
+) -> bytes:
     hdr = bytearray(HEADER_BLOCK)
-    struct.pack_into("<8sQQQIHHHH", hdr, 0, b"ElfFile\x00", first_chunk,
-                     len(chunks) - 1 if last_chunk is None else last_chunk, next_record_id, 128, 1, 3, HEADER_BLOCK,
-                     len(chunks))
+    struct.pack_into(
+        "<8sQQQIHHHH",
+        hdr,
+        0,
+        b"ElfFile\x00",
+        first_chunk,
+        len(chunks) - 1 if last_chunk is None else last_chunk,
+        next_record_id,
+        128,
+        1,
+        3,
+        HEADER_BLOCK,
+        len(chunks),
+    )
     struct.pack_into("<I", hdr, 120, 1 if dirty else 0)
     struct.pack_into("<I", hdr, 124, zlib.crc32(bytes(hdr[:120])))
     return bytes(hdr) + b"".join(chunks) + b"\x00" * (CHUNK_SIZE * trailing_empty)

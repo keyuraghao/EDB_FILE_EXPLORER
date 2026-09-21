@@ -35,16 +35,53 @@ def _security(record_id: int, minute: int, event_id: int, **data: object) -> dic
 @pytest.fixture
 def security_evtx(tmp_path: Path) -> Path:
     recs = [
-        _security(100, 0, 4624, TargetUserName="alice", TargetDomainName="CORP", LogonType=10,
-                  IpAddress="10.0.0.5", WorkstationName="WS1", SubjectUserName="SYSTEM",
-                  LogonProcessName="User32", AuthenticationPackageName="Negotiate"),
-        _security(101, 1, 4624, TargetUserName="bob", TargetDomainName="CORP", LogonType=3,
-                  IpAddress="10.0.0.9", WorkstationName="WS2", SubjectUserName="SYSTEM",
-                  LogonProcessName="Kerberos", AuthenticationPackageName="Kerberos"),
-        _security(102, 2, 4625, TargetUserName="eve", TargetDomainName="CORP", LogonType=3,
-                  IpAddress="10.0.66.66", WorkstationName="EVIL", Status="0xc000006d", SubStatus="0xc0000064"),
-        _security(103, 3, 4672, SubjectUserName="admin", SubjectDomainName="CORP",
-                  SubjectLogonId="0x3e7", PrivilegeList="SeDebugPrivilege"),
+        _security(
+            100,
+            0,
+            4624,
+            TargetUserName="alice",
+            TargetDomainName="CORP",
+            LogonType=10,
+            IpAddress="10.0.0.5",
+            WorkstationName="WS1",
+            SubjectUserName="SYSTEM",
+            LogonProcessName="User32",
+            AuthenticationPackageName="Negotiate",
+        ),
+        _security(
+            101,
+            1,
+            4624,
+            TargetUserName="bob",
+            TargetDomainName="CORP",
+            LogonType=3,
+            IpAddress="10.0.0.9",
+            WorkstationName="WS2",
+            SubjectUserName="SYSTEM",
+            LogonProcessName="Kerberos",
+            AuthenticationPackageName="Kerberos",
+        ),
+        _security(
+            102,
+            2,
+            4625,
+            TargetUserName="eve",
+            TargetDomainName="CORP",
+            LogonType=3,
+            IpAddress="10.0.66.66",
+            WorkstationName="EVIL",
+            Status="0xc000006d",
+            SubStatus="0xc0000064",
+        ),
+        _security(
+            103,
+            3,
+            4672,
+            SubjectUserName="admin",
+            SubjectDomainName="CORP",
+            SubjectLogonId="0x3e7",
+            PrivilegeList="SeDebugPrivilege",
+        ),
     ]
     p = tmp_path / "Security.evtx"
     p.write_bytes(build_file([build_chunk(recs, 0)], next_record_id=104))
@@ -116,17 +153,27 @@ def test_timeline_uses_timecreated(security_evtx: Path) -> None:
 def test_unnamed_and_userdata_payloads(tmp_path: Path) -> None:
     recs = [
         # Unnamed <Data> elements (Application error style) collect into a JSON list in a "Data" column.
-        {"record_id": 200, "when": T0, "channel": "Application", "provider": "Application Error",
-         "provider_guid": "00000000-0000-0000-0000-000000000000",
-         "system": {"EventID": 1000, "Level": 2}, "data": {},
-         "unnamed": ["notepad.exe", "10.0.19041.1", "c0000005"]},
+        {
+            "record_id": 200,
+            "when": T0,
+            "channel": "Application",
+            "provider": "Application Error",
+            "provider_guid": "00000000-0000-0000-0000-000000000000",
+            "system": {"EventID": 1000, "Level": 2},
+            "data": {},
+            "unnamed": ["notepad.exe", "10.0.19041.1", "c0000005"],
+        },
         # UserData (RDP style) is flattened one level into named columns.
-        {"record_id": 201, "when": T0.replace(minute=5),
-         "channel": "Microsoft-Windows-TerminalServices-LocalSessionManager/Operational",
-         "provider": "Microsoft-Windows-TerminalServices-LocalSessionManager",
-         "provider_guid": "5D896912-022D-40AA-A3A8-4FA5515C76D7",
-         "system": {"EventID": 21, "Level": 4, "UserID": "S-1-5-18"},
-         "data": {"User": "CORP\\bob", "SessionID": 3, "Address": "10.0.0.9"}, "user_data": True},
+        {
+            "record_id": 201,
+            "when": T0.replace(minute=5),
+            "channel": "Microsoft-Windows-TerminalServices-LocalSessionManager/Operational",
+            "provider": "Microsoft-Windows-TerminalServices-LocalSessionManager",
+            "provider_guid": "5D896912-022D-40AA-A3A8-4FA5515C76D7",
+            "system": {"EventID": 21, "Level": 4, "UserID": "S-1-5-18"},
+            "data": {"User": "CORP\\bob", "SessionID": 3, "Address": "10.0.0.9"},
+            "user_data": True,
+        },
     ]
     p = tmp_path / "mixed.evtx"
     p.write_bytes(build_file([build_chunk(recs, 0)]))

@@ -249,8 +249,9 @@ class EvtxBackend(Backend):
                 is_sys = i < len(_SYSTEM_NAMES)
                 ctype = sys_types[base] if is_sys else "Text"
                 columns.append(
-                    ColumnInfo(i + 1, name, ctype, 0, "fixed" if is_sys else "tagged", None, "utf-8",
-                               ctype == "Text", False)
+                    ColumnInfo(
+                        i + 1, name, ctype, 0, "fixed" if is_sys else "tagged", None, "utf-8", ctype == "Text", False
+                    )
                 )
             extra = {"channel": channel}
             if multichannel:
