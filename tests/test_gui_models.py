@@ -634,7 +634,8 @@ def test_portable_mode_redirects_qsettings(app: QApplication, tmp_path: Any, mon
         s = QSettings()  # the no-argument form the application uses (org / app names from QCoreApplication)
         s.setValue("probe", 1)
         s.sync()
-        assert s.format() == QSettings.Format.IniFormat and s.fileName().startswith(str(root / "data" / "settings"))
-        assert Path(s.fileName()).exists()
+        assert s.format() == QSettings.Format.IniFormat
+        ini = Path(s.fileName())  # Qt reports forward slashes even on Windows
+        assert ini.exists() and ini.resolve().is_relative_to((root / "data" / "settings").resolve())
     finally:
         QSettings.setDefaultFormat(old_format)  # other tests use explicit ini paths, the redirect is harmless
