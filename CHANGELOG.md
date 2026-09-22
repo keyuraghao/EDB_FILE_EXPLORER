@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-09-22
+
+### Fixed
+- Windows CI: the portable-mode settings test compared Qt's forward-slash path with a backslash string.
+
 ## [0.8.0] - 2026-09-22
 
 ### Added
