@@ -245,28 +245,33 @@ def test_cli_project_commands(evidence: dict[str, Path], tmp_path: Path, monkeyp
     monkeypatch.setenv("EDB_EXPLORER_CONFIG_DIR", str(tmp_path / "cfg"))
     runner = CliRunner()
     out = tmp_path / "cli"
+
+    def flat(result: Any) -> str:
+        # rich wraps long lines (temp paths!) at the terminal width, so compare whitespace-normalised text
+        return " ".join((result.output + getattr(result, "stderr", "")).split())
+
     r = runner.invoke(
         app,
         ["project", "export", str(out), str(evidence["a"]), str(evidence["b"]), "--name", "cli", "-p", "pw", "--embed"],
     )
     assert r.exit_code == 0, r.output
-    assert "encrypted, evidence embedded, signed by" in r.output
+    assert "encrypted, evidence embedded, signed by" in flat(r)
     r = runner.invoke(app, ["project", "info", str(out) + EXTENSION])
-    assert r.exit_code == 0 and "Integrity: OK" in r.output and "signer not in your trust store" in r.output
-    assert "Give --password" in r.output
+    assert r.exit_code == 0 and "Integrity: OK" in flat(r) and "signer not in your trust store" in flat(r)
+    assert "Give --password" in flat(r)
     r = runner.invoke(app, ["project", "info", str(out) + EXTENSION, "-p", "pw", "--json"])
     assert r.exit_code == 0
     info = json.loads(r.output)
     assert info["integrity_ok"] and info["signature"]["valid"] and len(info["project"]["databases"]) == 2
     fp = info["signature"]["fingerprint"]
     r = runner.invoke(app, ["project", "trust", fp, "--name", "me"])
-    assert r.exit_code == 0 and "Trusting" in r.output
+    assert r.exit_code == 0 and "Trusting" in flat(r)
     r = runner.invoke(app, ["project", "trust"])
-    assert r.exit_code == 0 and "me" in r.output and fp in r.output
+    assert r.exit_code == 0 and "me" in flat(r) and fp in flat(r)
     shutil.rmtree(evidence["root"])
     r = runner.invoke(app, ["project", "import", str(out) + EXTENSION, "-p", "pw", "--dest", str(tmp_path / "dest")])
     assert r.exit_code == 0, r.output
-    assert "Integrity: OK" in r.output and "trusted (me)" in r.output and "not found" not in r.output
+    assert "Integrity: OK" in flat(r) and "trusted (me)" in flat(r) and "not found" not in flat(r)
     assert (tmp_path / "dest" / "cli" / "host1" / "SRUDB.dat").exists()
     r = runner.invoke(app, ["project", "import", str(out) + EXTENSION, "-p", "bad"])
-    assert r.exit_code != 0 and "Wrong password" in r.output + (r.stderr if hasattr(r, "stderr") else "")
+    assert r.exit_code != 0 and "Wrong password" in flat(r)
