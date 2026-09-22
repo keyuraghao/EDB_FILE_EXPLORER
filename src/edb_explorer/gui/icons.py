@@ -299,6 +299,17 @@ def _g_filter(p: QPainter) -> None:
     p.drawPath(_poly((3.5, 4.5), (20.5, 4.5), (14, 12.5), (14, 19), (10, 21), (10, 12.5)))
 
 
+def _g_keyboard(p: QPainter) -> None:
+    p.setPen(_pen("#4a6fa5", 1.6))
+    p.setBrush(QColor("#e4ebf5"))
+    p.drawRoundedRect(QRectF(2.5, 6.5, 19, 11), 2, 2)
+    p.setPen(_pen("#4a6fa5", 1.4))
+    for y in (9.5, 12.0):
+        for x in (5.0, 8.0, 11.0, 14.0, 17.0):
+            p.drawPoint(QPointF(x, y))
+    p.drawLine(QPointF(7, 14.8), QPointF(17, 14.8))
+
+
 def _g_play(p: QPainter) -> None:
     p.setPen(_pen("#2f7a33", 1.4))
     p.setBrush(QColor("#3f9142"))
@@ -375,6 +386,7 @@ _GLYPHS: dict[str, Callable[[QPainter], None]] = {
     "clock": _g_clock,
     "history": _g_history,
     "filter": _g_filter,
+    "keyboard": _g_keyboard,
     "play": _g_play,
     "stop": _g_stop,
     "reload": _g_reload,

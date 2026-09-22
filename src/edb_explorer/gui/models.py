@@ -5,13 +5,15 @@ from __future__ import annotations
 import re
 from array import array
 from bisect import bisect_left
+from collections import OrderedDict
 from datetime import datetime
 from typing import Any
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPersistentModelIndex, QSortFilterProxyModel, Qt
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPersistentModelIndex, QSortFilterProxyModel, Qt, Signal
 from PySide6.QtGui import QColor, QStandardItem, QStandardItemModel
 
 from edb_explorer.core import ColumnInfo, EdbDatabase, TableInfo
+from edb_explorer.core.rowstore import DiskRowStore, StoreRows
 from edb_explorer.core.values import decode_ese_datetime, display_value
 
 RAW_ROLE = Qt.ItemDataRole.UserRole + 1
@@ -45,10 +47,25 @@ class RecordTableModel(QAbstractTableModel):
     Rows stay as the sparse dicts the loader produces (wide ESE tables have thousands of columns of which a
     handful are set per row).  Display strings are only cached for values that are expensive to render
     (blobs, timestamps, lists, long text); numbers and plain strings are rendered on the fly.
+
+    Two backings: rows live in memory until the loader spills the table into a :class:`DiskRowStore`
+    (``attach_store``); from then on the model serves windows of rows from an LRU page cache over that
+    store and sorting/filtering happen on disk through *views* (``set_view``), so a table of any size
+    costs a bounded amount of memory.
     """
+
+    PAGE = 256
+    CACHED_PAGES = 256  # ~65k rows
+
+    #: Disk mode only: the view wants a sort (column, descending) - the tab builds it in the background.
+    sort_requested = Signal(int, bool)
 
     def __init__(self, columns: tuple[ColumnInfo, ...], parent: Any = None) -> None:
         super().__init__(parent)
+        self.store: DiskRowStore | None = None
+        self.view_id: int | None = None
+        self._view_count = 0
+        self._pages: OrderedDict[int, list[list[Any]]] = OrderedDict()  # page -> [pos, idx, row, display cache]
         self.columns = list(columns)
         self.column_names = [c.name for c in self.columns]
         self.column_types = {c.name: c.type for c in self.columns}
@@ -67,7 +84,14 @@ class RecordTableModel(QAbstractTableModel):
 
     # ---- Qt API ------------------------------------------------------- #
     def rowCount(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> int:  # noqa: B008
-        return 0 if parent.isValid() else len(self._rows)
+        if parent.isValid():
+            return 0
+        return self._view_count if self.store is not None else len(self._rows)
+
+    @property
+    def disk(self) -> bool:
+        """True once the rows live in a :class:`DiskRowStore` instead of memory."""
+        return self.store is not None
 
     def columnCount(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> int:  # noqa: B008
         return 0 if parent.isValid() else len(self.columns)
@@ -81,8 +105,8 @@ class RecordTableModel(QAbstractTableModel):
                 return f"{c.name}\nType: {c.type} ({c.storage})\nID: {c.identifier}" + (
                     f"\nEncoding: {c.encoding}" if c.encoding else ""
                 )
-        elif role == Qt.ItemDataRole.DisplayRole and section < len(self._indices):
-            return str(self._indices[section])
+        elif role == Qt.ItemDataRole.DisplayRole and section < self.rowCount():
+            return str(self.row_index(section))
         return None
 
     def data(self, index: QModelIndex | QPersistentModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
@@ -93,32 +117,43 @@ class RecordTableModel(QAbstractTableModel):
             return self.display_text(r, c)
         if role == Qt.ItemDataRole.ToolTipRole:
             name = self.column_names[c]
-            val = self._rows[r].get(name)
+            val = self.raw_row(r).get(name)
             if val is None:
                 return None
             text = display_value(val, self.column_types.get(name), 2000)
             return text if len(text) > 40 else None
         if role == RAW_ROLE:
-            return self._rows[r].get(self.column_names[c])
+            return self.raw_row(r).get(self.column_names[c])
         if role == ROW_INDEX_ROLE:
-            return self._indices[r]
+            return self.row_index(r)
         if role == Qt.ItemDataRole.TextAlignmentRole:
             if self.columns[c].type in _NUMERIC_TYPES and self.columns[c].type != "DateTime":
                 return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             return int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        if role == Qt.ItemDataRole.ForegroundRole and self._rows[r].get(self.column_names[c]) is None:
+        if role == Qt.ItemDataRole.ForegroundRole and self.raw_row(r).get(self.column_names[c]) is None:
             return self._dim
         return None
 
+    def sort(self, column: int, order: Qt.SortOrder = Qt.SortOrder.AscendingOrder) -> None:
+        # Only reached in disk mode (the view talks to the proxy while rows are in memory).
+        if self.store is not None:
+            self.sort_requested.emit(column, order == Qt.SortOrder.DescendingOrder)
+
     # ---- helpers ------------------------------------------------------ #
     def display_text(self, r: int, c: int) -> str:
-        cache = self._display[r]
+        if self.store is not None:
+            entry = self._entry(r)
+            cache = entry[3]
+            row = entry[2]
+        else:
+            cache = self._display[r]
+            row = self._rows[r]
         if cache is not None:
             text = cache.get(c)
             if text is not None:
                 return text
         name = self.column_names[c]
-        val = self._rows[r].get(name)
+        val = row.get(name)
         if val is None:
             return ""
         if type(val) is str:
@@ -128,9 +163,80 @@ class RecordTableModel(QAbstractTableModel):
             return str(val)
         text = display_value(val, self.column_types.get(name), 300)
         if cache is None:
-            cache = self._display[r] = {}
+            cache = {}
+            if self.store is not None:
+                entry[3] = cache
+            else:
+                self._display[r] = cache
         cache[c] = text
         return text
+
+    # ---- disk mode ---------------------------------------------------- #
+    def _entry(self, r: int) -> list[Any]:
+        """``[pos, idx, row, display-cache]`` of view row ``r`` (fetches and caches its page)."""
+        page = r // self.PAGE
+        entries = self._pages.get(page)
+        if entries is None:
+            assert self.store is not None
+            start = page * self.PAGE
+            fetched = self.store.fetch(self.view_id, start, min(start + self.PAGE, self._view_count))
+            entries = [[pos, idx, row, None] for pos, idx, row in fetched]
+            self._pages[page] = entries
+            if len(self._pages) > self.CACHED_PAGES:
+                self._pages.popitem(last=False)
+        else:
+            self._pages.move_to_end(page)
+        i = r - page * self.PAGE
+        if i < len(entries):
+            return entries[i]
+        return [r, r, {}, None]  # a page shorter than announced (should not happen): render blank
+
+    def attach_store(self, store: DiskRowStore) -> None:
+        """Switch to disk mode: ``store`` already holds every row shown so far, in the same order."""
+        self.beginResetModel()
+        self._rows.clear()
+        del self._indices[:]
+        self._display.clear()
+        self._index_to_row = None
+        self.store = store
+        self.view_id = None
+        self._view_count = store.count
+        self._pages.clear()
+        self.seen_sorted = store.seen_sorted
+        self.seen_columns = set(self.seen_sorted)
+        self.endResetModel()
+
+    def store_grew(self, total: int, new_cols: set[int]) -> set[int]:
+        """The loader appended rows to the store (now ``total``); returns the columns seen for the first time."""
+        assert self.store is not None
+        fresh = set(new_cols) - self.seen_columns
+        if fresh:
+            self.seen_columns |= fresh
+            self.seen_sorted = tuple(sorted(self.seen_columns))
+        if self.view_id is None and total > self._view_count:
+            first = self._view_count
+            self.beginInsertRows(QModelIndex(), first, total - 1)
+            self._view_count = total
+            # the last page may have been fetched while partial
+            self._pages.pop(first // self.PAGE, None)
+            self.endInsertRows()
+        return fresh
+
+    def set_view(self, view_id: int | None) -> None:
+        """Show the rows of a store view (``None`` = storage order); the previous view is dropped."""
+        assert self.store is not None
+        old = self.view_id
+        self.beginResetModel()
+        self.view_id = view_id
+        self._view_count = self.store.view_count(view_id)
+        self._pages.clear()
+        self.endResetModel()
+        if old is not None and old != view_id:
+            self.store.drop_view(old)
+
+    def store_rows(self, columns: list[str] | None = None) -> StoreRows:
+        assert self.store is not None
+        return self.store.rows(self.view_id, columns)
 
     def append_rows(self, indices: list[int], rows: list[dict[str, Any]]) -> set[int]:
         """Append a batch; returns the set of column positions seen for the first time."""
@@ -173,15 +279,24 @@ class RecordTableModel(QAbstractTableModel):
         self._index_to_row = None
         self.seen_columns.clear()
         self.seen_sorted = ()
+        self._pages.clear()
+        self._view_count = 0
+        self.view_id = None
+        store, self.store = self.store, None
         self.endResetModel()
+        if store is not None:
+            store.close()
 
     def raw_row(self, r: int) -> dict[str, Any]:
-        return self._rows[r]
+        return self._entry(r)[2] if self.store is not None else self._rows[r]
 
     def row_index(self, r: int) -> int:
-        return self._indices[r]
+        return self._entry(r)[1] if self.store is not None else self._indices[r]
 
     def model_row_for_index(self, table_index: int) -> int | None:
+        if self.store is not None:
+            pos = self.store.position_of_index(table_index)
+            return None if pos is None else self.store.view_row_for_position(self.view_id, pos)
         if self._index_to_row is not None:
             return self._index_to_row.get(table_index)
         i = bisect_left(self._indices, table_index)

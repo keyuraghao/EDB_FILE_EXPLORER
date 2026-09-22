@@ -18,6 +18,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QDockWidget,
     QFileDialog,
     QMainWindow,
@@ -34,6 +35,7 @@ from edb_explorer.core.backends import KINDS
 from edb_explorer.core.session import ESE_EXTENSIONS
 from edb_explorer.core.sqlworkspace import SqlWorkspace
 from edb_explorer.gui.icons import app_icon, icon
+from edb_explorer.gui.shortcuts import ShortcutRegistry
 from edb_explorer.gui.tasks import TaskManager, TaskPanel
 from edb_explorer.gui.theme import THEMES, apply_theme, current_theme, theme_preference
 from edb_explorer.gui.widgets.agents_tab import AgentsTab
@@ -50,6 +52,13 @@ from edb_explorer.gui.widgets.info_panel import InfoPanel
 from edb_explorer.gui.widgets.inspector import RecordInspector
 from edb_explorer.gui.widgets.mailbox_tab import MailboxTab
 from edb_explorer.gui.widgets.query_tab import QueryTab, ResultsGrid, TimelineTab
+from edb_explorer.gui.widgets.settings_dialog import (
+    SettingsDialog,
+    apply_cache_dir,
+    cache_dir_setting,
+    memory_rows_setting,
+)
+from edb_explorer.gui.widgets.shortcuts_dialog import ShortcutsDialog
 from edb_explorer.gui.widgets.stats_dialog import StatsDialog
 from edb_explorer.gui.widgets.table_tab import TableTab
 from edb_explorer.gui.widgets.welcome import WelcomePage
@@ -78,8 +87,11 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)
         self._workers: list[FunctionWorker] = []
         self._search_dialog: SearchDialog | None = None
-        self.max_rows = int(self.settings.value("max_rows", 1_000_000))
+        self.memory_rows = memory_rows_setting(self.settings)
+        apply_cache_dir(cache_dir_setting(self.settings))
         self.tasks = TaskManager(self)
+        self.shortcuts = ShortcutRegistry(self.settings, self)
+        self._toolbar_tips: list[tuple[QAction, str, QAction]] = []
         self.workspace = SqlWorkspace()
         self._sql_tab: QueryTab | None = None
         self._timeline_tab: TimelineTab | None = None
@@ -160,14 +172,16 @@ class MainWindow(QMainWindow):
     def _build_menus(self) -> None:
         mb = self.menuBar()
         file_menu = mb.addMenu("&File")
-        self._act(file_menu, "&Open database(s)…", self.open_files_dialog, QKeySequence.StandardKey.Open, "open")
-        self._act(file_menu, "Open &folder (scan)…", self.open_folder_dialog, "Ctrl+Shift+O", "scan")
+        a_open = self._act(
+            file_menu, "&Open database(s)…", self.open_files_dialog, QKeySequence.StandardKey.Open, "open"
+        )
+        a_scan = self._act(file_menu, "Open &folder (scan)…", self.open_folder_dialog, "Ctrl+Shift+O", "scan")
         self.recent_menu = file_menu.addMenu("Open &recent")
         self.recent_menu.setIcon(icon("history"))
         file_menu.addSeparator()
-        self._act(file_menu, "&Extract / export…", self.export_current, "Ctrl+E", "extract")
+        a_extract = self._act(file_menu, "&Extract / export…", self.export_current, "Ctrl+E", "extract")
         self._act(file_menu, "Extract &selected rows…", self.extract_selection, "Ctrl+Shift+E", "rows")
-        self._act(file_menu, "Generate &report…", self.show_report, "Ctrl+R", "report")
+        a_report = self._act(file_menu, "Generate &report…", self.show_report, "Ctrl+R", "report")
         file_menu.addSeparator()
         self._act(
             file_menu, "Close &tab", lambda: self._close_tab(self.tabs.currentIndex()), QKeySequence.StandardKey.Close
@@ -178,10 +192,10 @@ class MainWindow(QMainWindow):
         self._act(file_menu, "&Quit", self.close, QKeySequence.StandardKey.Quit)
 
         view = mb.addMenu("&View")
-        view.addAction(self.dock_tree.toggleViewAction())
-        view.addAction(self.dock_info.toggleViewAction())
-        view.addAction(self.dock_inspector.toggleViewAction())
-        view.addAction(self.dock_tasks.toggleViewAction())
+        for dock in (self.dock_tree, self.dock_info, self.dock_inspector, self.dock_tasks):
+            toggle = dock.toggleViewAction()
+            view.addAction(toggle)
+            self.shortcuts.register(toggle, "View", description=f"Show / hide the {toggle.text()} panel")
         view.addSeparator()
         self._act(view, "Collapse all databases", lambda: self.tree.collapse_all(), "Ctrl+Shift+-", "collapse")
         self._act(view, "Expand all databases", lambda: self.tree.expand_all(), "Ctrl+Shift+=", "expand")
@@ -202,28 +216,35 @@ class MainWindow(QMainWindow):
             self._theme_group.addAction(act)
             theme_menu.addAction(act)
             self._theme_actions[pref] = act
+            self.shortcuts.register(act, "View", f"view.theme_{pref}", description="Switch the colour theme")
         self.theme_toggle = self._act(view, "Toggle light / dark", self._toggle_theme, "Ctrl+Shift+D")
         self._act(view, "Reset &layout", self._reset_layout)
 
         analysis = mb.addMenu("&Analysis")
-        self._act(analysis, "&SQL console", self.show_sql, "Ctrl+Q", "sql")
-        self._act(analysis, "&Timeline", self.show_timeline, "Ctrl+L", "timeline")
+        a_sql = self._act(analysis, "&SQL console", self.show_sql, "Ctrl+Q", "sql")
+        a_timeline = self._act(analysis, "&Timeline", self.show_timeline, "Ctrl+L", "timeline")
         self._act(analysis, "Column &statistics for current table…", self.show_stats, "Ctrl+I", "stats")
-        self._act(analysis, "Exchange &mailbox viewer", lambda: self.show_mailboxes(None), "Ctrl+M", "mailbox")
+        a_mail = self._act(analysis, "Exchange &mailbox viewer", lambda: self.show_mailboxes(None), "Ctrl+M", "mailbox")
         analysis.addSeparator()
-        self._act(analysis, "&AI agents (Claude Code, Codex, Gemini…)", self.show_agents, "Ctrl+Shift+A", "agents")
+        a_agents = self._act(
+            analysis, "&AI agents (Claude Code, Codex, Gemini…)", self.show_agents, "Ctrl+Shift+A", "agents"
+        )
         self.views_menu = analysis.addMenu("Artifact &views")
         self.views_menu.aboutToShow.connect(self._fill_views_menu)
 
         tools = mb.addMenu("&Tools")
-        self._act(tools, "&Find in database(s)…", self.show_search, "Ctrl+Shift+F", "search")
+        a_search = self._act(tools, "&Find in database(s)…", self.show_search, "Ctrl+Shift+F", "search")
         self._act(tools, "Filter &rows in current table", self._focus_filter, QKeySequence.StandardKey.Find, "filter")
         self._act(tools, "&Timestamp decoder…", lambda: self.show_timestamp(None), "Ctrl+T", "clock")
         self._act(tools, "&Count records in all tables", lambda: self._count_all(self._current_db_id()))
         tools.addSeparator()
-        self._act(tools, "Set &row limit…", self._set_row_limit)
+
+        settings_menu = mb.addMenu("&Settings")
+        self._act(settings_menu, "&Preferences…  (rows kept in memory, disk cache)", self.show_settings, "Ctrl+,")
+        self._act(settings_menu, "&Keyboard shortcuts…", self.show_shortcuts, "Ctrl+Shift+K", "keyboard")
 
         help_menu = mb.addMenu("&Help")
+        self._act(help_menu, "&Keyboard shortcuts", self.show_shortcuts, None, "keyboard", rebindable=False)
         self._act(help_menu, "&MCP server setup…", self._show_mcp_help)
         self._act(
             help_menu,
@@ -237,25 +258,22 @@ class MainWindow(QMainWindow):
         tb.setObjectName("toolbar_main")
         tb.setMovable(False)
         tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
-        for text, slot, glyph, tip in (
-            ("Open", self.open_files_dialog, "open", "Open database file(s)  (Ctrl+O)"),
-            ("Scan", self.open_folder_dialog, "scan", "Scan a folder or mounted image for databases  (Ctrl+Shift+O)"),
-            (
-                "Search",
-                self.show_search,
-                "search",
-                "Find text across every table of the open databases  (Ctrl+Shift+F)",
-            ),
-            ("SQL", self.show_sql, "sql", "SQL console over any format  (Ctrl+Q)"),
-            ("Timeline", self.show_timeline, "timeline", "Timeline of every timestamp column  (Ctrl+L)"),
-            ("Mail", lambda: self.show_mailboxes(None), "mailbox", "Exchange mailbox viewer  (Ctrl+M)"),
-            ("Agents", self.show_agents, "agents", "AI agents: Claude Code, Codex, Gemini…  (Ctrl+Shift+A)"),
-            ("Extract", self.export_current, "extract", "Extract / export the current table or results  (Ctrl+E)"),
-            ("Report", self.show_report, "report", "Generate a report  (Ctrl+R)"),
+        for text, slot, glyph, tip, menu_action in (
+            ("Open", self.open_files_dialog, "open", "Open database file(s)", a_open),
+            ("Scan", self.open_folder_dialog, "scan", "Scan a folder or mounted image for databases", a_scan),
+            ("Search", self.show_search, "search", "Find text across every table of the open databases", a_search),
+            ("SQL", self.show_sql, "sql", "SQL console over any format", a_sql),
+            ("Timeline", self.show_timeline, "timeline", "Timeline of every timestamp column", a_timeline),
+            ("Mail", lambda: self.show_mailboxes(None), "mailbox", "Exchange mailbox viewer", a_mail),
+            ("Agents", self.show_agents, "agents", "AI agents: Claude Code, Codex, Gemini…", a_agents),
+            ("Extract", self.export_current, "extract", "Extract / export the current table or results", a_extract),
+            ("Report", self.show_report, "report", "Generate a report", a_report),
         ):
             act = self._act(None, text, slot, None, glyph)
-            act.setToolTip(tip)
+            self._toolbar_tips.append((act, tip, menu_action))
             tb.addAction(act)
+        self._refresh_toolbar_tips()
+        self.shortcuts.changed.connect(self._refresh_toolbar_tips)
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         tb.addWidget(spacer)
@@ -263,7 +281,15 @@ class MainWindow(QMainWindow):
         tb.addAction(self.theme_button)
         self._sync_theme_ui()
 
-    def _act(self, menu: QMenu | None, text: str, slot: Any, shortcut: Any = None, glyph: str | None = None) -> QAction:
+    def _act(
+        self,
+        menu: QMenu | None,
+        text: str,
+        slot: Any,
+        shortcut: Any = None,
+        glyph: str | None = None,
+        rebindable: bool = True,
+    ) -> QAction:
         act = QAction(text, self)
         if glyph:
             act.setIcon(icon(glyph))
@@ -272,7 +298,21 @@ class MainWindow(QMainWindow):
         act.triggered.connect(slot)
         if menu is not None:
             menu.addAction(act)
+            if rebindable:
+                # the registry applies the user's override (Settings ▸ Keyboard shortcuts) on top of the default
+                self.shortcuts.register(act, menu.title())
         return act
+
+    def _refresh_toolbar_tips(self) -> None:
+        """Toolbar tooltips quote the menu action's *current* shortcut."""
+        from edb_explorer.gui.shortcuts import key_text
+
+        for act, tip, menu_action in self._toolbar_tips:
+            key = key_text(menu_action.shortcut())
+            act.setToolTip(f"{tip}  ({key})" if key else tip)
+
+    def show_shortcuts(self) -> None:
+        ShortcutsDialog(self.shortcuts, self).exec()
 
     # ------------------------------------------------------------------ #
     # Opening databases
@@ -404,7 +444,7 @@ class MainWindow(QMainWindow):
                 return w
         if self.tabs.count() == 1 and self.tabs.widget(0) is self._placeholder:
             self.tabs.removeTab(0)
-        tab = TableTab(db, info, self.max_rows)
+        tab = TableTab(db, info, self.memory_rows)
         tab.row_selected.connect(self._row_selected)
         tab.status.connect(lambda m: self.statusBar().showMessage(m))
         tab.interpret_requested.connect(self.show_timestamp)
@@ -428,6 +468,7 @@ class MainWindow(QMainWindow):
         known = tab.db.cached_count(tab.table.name)
         task = self.tasks.start(f"Loading {tab.table.display_name}", cancel=tab.stop, detail=tab.db.path.name)
         loader.chunk_ready.connect(lambda _i, _r: task.progress(tab.loaded, known or 0, f"{tab.loaded:,} rows"))
+        loader.store_grew.connect(lambda n, _c: task.progress(n, known or 0, f"{n:,} rows (disk cache)"))
         loader.finished_ok.connect(lambda n: task.finish(f"{n:,} rows"))
         loader.failed.connect(lambda m: task.finish(m, failed=True))
 
@@ -724,21 +765,15 @@ class MainWindow(QMainWindow):
         self._workers.append(worker)
         worker.start()
 
-    def _set_row_limit(self) -> None:
-        from PySide6.QtWidgets import QInputDialog
-
-        value, ok = QInputDialog.getInt(
-            self,
-            "Row limit",
-            "Maximum rows to load per table (protects memory on huge tables):",
-            self.max_rows,
-            1000,
-            50_000_000,
-            100_000,
-        )
-        if ok:
-            self.max_rows = value
-            self.settings.setValue("max_rows", value)
+    def show_settings(self) -> None:
+        dlg = SettingsDialog(self.settings, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.memory_rows = dlg.memory_rows
+            self.statusBar().showMessage(
+                f"Preferences saved: up to {self.memory_rows:,} rows per table kept in memory"
+                + (f", disk cache in {dlg.cache_dir}" if dlg.cache_dir else ""),
+                8000,
+            )
 
     def set_theme(self, preference: str) -> None:
         """Switch to ``light``, ``dark`` or ``system`` and remember it."""

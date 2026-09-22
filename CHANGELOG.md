@@ -6,6 +6,25 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **Tables of any size load completely.** The grid used to stop at a *row limit* (1,000,000 by default) and
+  silently show nothing past it. Loading now keeps the first rows of a table in memory (default 250,000) and spills bigger tables into a temporary SQLite cache (`core/rowstore.py`); the grid
+  then reads windows of rows from disk, sorting and filtering run as SQL views built in the background, and the
+  inspector, copy, *Extract rows as displayed* and *go to row* all work on the full row set. Values round-trip
+  exactly (verified row-by-row against the in-memory grid on ESE, EVTX and SRUM evidence, including
+  multi-valued and blob columns); the cache is deleted when the tab or the application closes and honours
+  `EDB_EXPLORER_CACHE_DIR`.
+
+### Added
+- **Settings ▸ Preferences…** (`Ctrl+,`): explains the in-memory row budget and sets it with a slider synced to an
+  exact numeric field (10,000 - 5,000,000 rows, presets, live RAM estimate at ~2 KB/row, *Restore default* =
+  250,000), plus the disk cache directory with its free space. Replaces the plain *Tools ▸ Set row limit…* prompt.
+- **Settings ▸ Keyboard shortcuts…** (`Ctrl+Shift+K`, also in Help): every menu action - including panel toggles
+  and theme choices - listed by menu with its current and default key. Rebind by pressing the new combination
+  (conflicts are flagged and can be taken over), clear, reset one or all, filter the list, copy it as a
+  cheat-sheet. Bindings persist in the settings (`gui/shortcuts.py` registry) and menus / toolbar tooltips
+  follow the current keys.
+
 ## [0.5.0] - 2026-09-21
 
 ### Added

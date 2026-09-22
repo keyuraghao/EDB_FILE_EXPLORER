@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
+from collections.abc import Sequence
 from typing import Any
 
 from PySide6.QtCore import QModelIndex, QPoint, Qt, QTimer, Signal
@@ -25,27 +26,35 @@ from PySide6.QtWidgets import (
 )
 
 from edb_explorer.core import EdbDatabase, TableInfo
+from edb_explorer.core.rowstore import DiskRowStore, FilterSpec, SortSpec
 from edb_explorer.core.values import display_value
 from edb_explorer.gui.icons import icon
 from edb_explorer.gui.models import RAW_ROLE, RecordFilterProxy, RecordTableModel
-from edb_explorer.gui.workers import RecordLoader
+from edb_explorer.gui.workers import RecordLoader, ViewBuilder
 
 
 class TableTab(QWidget):
+    """Every row of the table is loaded: the first ``memory_rows`` stay in memory (sorted/filtered by the
+    proxy), bigger tables spill to a :class:`DiskRowStore` and the grid then reads windows from disk."""
+
     row_selected = Signal(str, str, int, dict)  # db_id, table, row_index, raw row
     status = Signal(str)
     interpret_requested = Signal(object)  # value to send to the timestamp helper
     extract_requested = Signal(str)  # scope: "selection" | "table"
 
-    def __init__(self, db: EdbDatabase, table: TableInfo, max_rows: int = 1_000_000, parent: Any = None) -> None:
+    def __init__(self, db: EdbDatabase, table: TableInfo, memory_rows: int = 250_000, parent: Any = None) -> None:
         super().__init__(parent)
         self.db = db
         self.table = table
-        self.max_rows = max_rows
+        self.memory_rows = memory_rows
         self.loader: RecordLoader | None = None
         self.loaded = 0
         self.user_hidden: set[int] = set()
         self._finished = False
+        self._builder: ViewBuilder | None = None
+        self._old_builders: list[ViewBuilder] = []  # cancelled builds still winding down
+        self._sort: SortSpec | None = None
+        self._view_stale = False  # rows arrived after the current disk view was built
 
         self.model = RecordTableModel(table.columns, self)
         self.proxy = RecordFilterProxy(self)
@@ -138,6 +147,7 @@ class TableTab(QWidget):
         vh.setMinimumWidth(48)
         self.view.selectionModel().currentRowChanged.connect(self._current_changed)
         self.view.setSortingEnabled(False)  # enabled once loading finishes (sorting mid-load is wasteful)
+        self.model.sort_requested.connect(self._sort_requested)
         layout.addWidget(self.view, 1)
 
         foot = QHBoxLayout()
@@ -170,8 +180,10 @@ class TableTab(QWidget):
         self.progress.setRange(0, 0)
         self.progress.show()
         self.stop_btn.setEnabled(True)
-        self.loader = RecordLoader(self.db, self.table.name, self.max_rows, self)
+        self.loader = RecordLoader(self.db, self.table.name, self.memory_rows, self)
         self.loader.chunk_ready.connect(self._on_chunk)
+        self.loader.spilled.connect(self._on_spilled)
+        self.loader.store_grew.connect(self._on_store_grew)
         self.loader.finished_ok.connect(self._on_finished)
         self.loader.failed.connect(self._on_failed)
         self.loader.start()
@@ -181,27 +193,75 @@ class TableTab(QWidget):
         if self.loader and self.loader.isRunning():
             self.loader.cancel()
             self._update_status("Stopping…")
+        self._cancel_builder()
 
     def reload(self) -> None:
         self.stop()
+        self._cancel_builder(wait=True)
         if self.loader:
             self.loader.wait(5000)
         self.view.setSortingEnabled(False)
-        self.model.clear()
+        self._sort = None
+        self._view_stale = False
+        if self.model.disk:
+            self.model.clear()  # also closes the store
+            self.proxy.setSourceModel(self.model)
+            self.view.setModel(self.proxy)
+            self.view.selectionModel().currentRowChanged.connect(self._current_changed)
+        else:
+            self.model.clear()
+        self.proxy.set_filter("")
         for c in range(self.model.columnCount()):
             self.view.setColumnHidden(c, True)
         self.start()
 
     def shutdown(self) -> None:
+        self._cancel_builder(wait=True)
         if self.loader:
             self.loader.cancel()
             self.loader.wait(10000)
+        if self.model.store is not None:
+            self.model.store.close()
 
     def _on_chunk(self, indices: list[int], rows: list[dict[str, Any]]) -> None:
         new_cols = self.model.append_rows(indices, rows)
         self.loaded += len(rows)
         if new_cols:
             self._reveal_columns(new_cols)
+        self._update_status("Loading…")
+
+    def _on_spilled(self, store: DiskRowStore) -> None:
+        """The table outgrew memory: the grid now reads from the disk store (the proxy steps aside)."""
+        hh = self.view.horizontalHeader()
+        widths = [self.view.columnWidth(c) for c in range(self.model.columnCount())]
+        hidden = [self.view.isColumnHidden(c) for c in range(self.model.columnCount())]
+        self.proxy.set_filter("")
+        # Detach the proxy entirely: as a consumer it would re-sort/re-filter every row on each model
+        # reset or insert (it keeps the sort column from the header's initial state), and that is
+        # exactly the O(n) Python work disk mode exists to avoid.
+        self.proxy.setSourceModel(None)
+        self.model.attach_store(store)
+        self.view.setModel(self.model)
+        self.view.selectionModel().currentRowChanged.connect(self._current_changed)
+        for c, (w, h) in enumerate(zip(widths, hidden, strict=True)):
+            self.view.setColumnHidden(c, h)
+            if not h:
+                self.view.setColumnWidth(c, w)
+        hh.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
+        self.loaded = store.count
+        # columns first populated by rows that reached the store before the model switched over
+        self._reveal_columns({c for c in self.model.seen_sorted if hidden[c] and c not in self.user_hidden})
+        if self.filter_edit.text():
+            self._request_view()
+        self._update_status("Loading…")
+
+    def _on_store_grew(self, total: int, new_cols: list[int]) -> None:
+        fresh = self.model.store_grew(total, set(new_cols))
+        self.loaded = total
+        if fresh:
+            self._reveal_columns(fresh)
+        if self.model.view_id is not None:
+            self._view_stale = True
         self._update_status("Loading…")
 
     def _on_finished(self, total: int) -> None:
@@ -213,8 +273,13 @@ class TableTab(QWidget):
         # setSortingEnabled(True) would apply immediately - keep natural order.
         self.view.horizontalHeader().setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
         self.view.setSortingEnabled(True)
-        self.proxy.invalidate()
-        self._update_status("Stopped" if cancelled else "Loaded" if total < self.max_rows else "Row limit reached")
+        if self.model.disk:
+            self.loaded = self.model.store.count if self.model.store else total
+            if self._view_stale or (self.filter_edit.text() and self.model.view_id is None):
+                self._request_view()  # the disk view was built while rows were still arriving
+        else:
+            self.proxy.invalidate()
+        self._update_status("Stopped" if cancelled else "Loaded")
 
     def _on_failed(self, message: str) -> None:
         self._finished = True
@@ -223,14 +288,73 @@ class TableTab(QWidget):
         self._update_status(f"Error: {message}")
 
     def _update_status(self, state: str) -> None:
-        shown = self.proxy.rowCount()
         text = f"{state} · {self.loaded:,} rows loaded"
+        if self.model.disk:
+            text += " (disk cache)"
         if self.filter_edit.text():
+            shown = self.model.rowCount() if self.model.disk else self.proxy.rowCount()
             text += f" · {shown:,} match filter"
+            if self._view_stale:
+                text += " (so far)"
         visible = sum(1 for c in range(self.model.columnCount()) if not self.view.isColumnHidden(c))
         text += f" · {visible}/{self.model.columnCount()} columns"
         self.status_label.setText(text)
         self.status.emit(text)
+
+    # ------------------------------------------------------------------ #
+    # Disk views (filter / sort once the table lives in the store)
+    # ------------------------------------------------------------------ #
+    def _request_view(self) -> None:
+        """(Re)build the disk view for the current filter + sort in the background."""
+        store = self.model.store
+        if store is None:
+            return
+        self._cancel_builder()
+        text = self.filter_edit.text()
+        spec = FilterSpec(text, self.regex_btn.isChecked(), self.case_btn.isChecked()) if text else None
+        self._view_stale = False
+        if spec is None and self._sort is None:
+            self.model.set_view(None)
+            self._update_status("Loaded" if self._finished else "Loading…")
+            return
+        self._builder = ViewBuilder(store, spec, self._sort, self)
+        self._builder.done.connect(self._on_view_built)
+        self._builder.failed.connect(lambda m: self._update_status(f"Filter failed: {m}"))
+        self._builder.start()
+        self.progress.setRange(0, 0)
+        self.progress.show()
+        self._update_status("Sorting…" if spec is None else "Filtering…")
+
+    def _on_view_built(self, view_id: int) -> None:
+        if self.sender() is not self._builder:  # superseded by a newer request
+            if self.model.store is not None:
+                self.model.store.drop_view(view_id)
+            return
+        self._builder = None
+        self.model.set_view(view_id)
+        if self._finished:
+            self.progress.hide()
+        self._update_status("Loaded" if self._finished else "Loading…")
+
+    def _cancel_builder(self, wait: bool = False) -> None:
+        builder, self._builder = self._builder, None
+        if builder is not None:
+            builder.cancel()
+            self._old_builders.append(builder)
+        if wait:
+            for b in self._old_builders:
+                b.wait(10000)
+        self._old_builders = [b for b in self._old_builders if b.isRunning()]
+
+    def _sort_requested(self, column: int, descending: bool) -> None:
+        self._sort = SortSpec(column, descending) if column >= 0 else None
+        self._request_view()
+
+    def _source_row(self, view_row: int) -> int:
+        """Model row behind a grid row (identity in disk mode, proxy mapping in memory mode)."""
+        if self.model.disk:
+            return view_row
+        return self.proxy.mapToSource(self.proxy.index(view_row, 0)).row()
 
     # ------------------------------------------------------------------ #
     # Columns
@@ -298,6 +422,9 @@ class TableTab(QWidget):
     # Filtering / selection
     # ------------------------------------------------------------------ #
     def apply_filter(self) -> None:
+        if self.model.disk:
+            self._request_view()
+            return
         self.proxy.set_filter(self.filter_edit.text(), self.regex_btn.isChecked(), self.case_btn.isChecked())
         self._update_status("Loaded" if self._finished else "Loading…")
 
@@ -308,8 +435,7 @@ class TableTab(QWidget):
     def _current_changed(self, current: QModelIndex, _previous: QModelIndex) -> None:
         if not current.isValid():
             return
-        src = self.proxy.mapToSource(current)
-        r = src.row()
+        r = self._source_row(current.row())
         self.row_selected.emit(self.db.id, self.table.name, self.model.row_index(r), self.model.raw_row(r))
 
     def select_row_index(self, table_index: int, column: str | None = None) -> bool:
@@ -319,7 +445,7 @@ class TableTab(QWidget):
         c = self.model.column_position(column) if column else 0
         if c is None or self.view.isColumnHidden(c):
             c = next((i for i in range(self.model.columnCount()) if not self.view.isColumnHidden(i)), 0)
-        idx = self.proxy.mapFromSource(self.model.index(r, c))
+        idx = self.model.index(r, c) if self.model.disk else self.proxy.mapFromSource(self.model.index(r, c))
         if not idx.isValid():
             return False
         self.view.setCurrentIndex(idx)
@@ -333,18 +459,20 @@ class TableTab(QWidget):
             return []
         cols = self.visible_columns()
         out = []
-        for proxy_row in sorted({i.row() for i in sel.selectedIndexes()}):
-            src = self.proxy.mapToSource(self.proxy.index(proxy_row, 0)).row()
+        for view_row in sorted({i.row() for i in sel.selectedIndexes()}):
+            src = self._source_row(view_row)
             raw = self.model.raw_row(src)
             out.append({"_row": self.model.row_index(src), **{c: raw.get(c) for c in cols}})
         return out
 
-    def current_rows(self) -> list[dict[str, Any]]:
-        """Rows currently displayed (after filtering/sorting), decoded to display strings."""
+    def current_rows(self) -> Sequence[dict[str, Any]]:
+        """Rows currently displayed (after filtering/sorting); streamed lazily from disk in disk mode."""
         cols = self.visible_columns()
+        if self.model.disk:
+            return self.model.store_rows(cols)
         out = []
         for r in range(self.proxy.rowCount()):
-            src = self.proxy.mapToSource(self.proxy.index(r, 0)).row()
+            src = self._source_row(r)
             raw = self.model.raw_row(src)
             out.append({"_row": self.model.row_index(src), **{c: raw.get(c) for c in cols}})
         return out
@@ -361,8 +489,9 @@ class TableTab(QWidget):
         buf = io.StringIO()
         writer = csv.writer(buf, delimiter="\t", lineterminator="\n")
         writer.writerow([self.model.column_names[c] for c in cols])
+        grid = self.view.model()
         for r in rows:
-            writer.writerow([self.proxy.index(r, c).data(Qt.ItemDataRole.DisplayRole) or "" for c in cols])
+            writer.writerow([grid.index(r, c).data(Qt.ItemDataRole.DisplayRole) or "" for c in cols])
         QApplication.clipboard().setText(buf.getvalue())
         self.status.emit(f"Copied {len(rows)} row(s) to clipboard")
 
