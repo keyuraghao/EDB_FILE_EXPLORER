@@ -279,6 +279,13 @@ def test_settings_dialog_budget_slider_and_field_stay_in_sync(app: QApplication,
         rowstore.DEFAULT_CACHE_DIR = None
 
 
+def _nat(portable: str) -> str:
+    """How a portable key string is shown on this platform (macOS renders Ctrl+1 as ⌘1)."""
+    from PySide6.QtGui import QKeySequence
+
+    return QKeySequence(portable).toString(QKeySequence.SequenceFormat.NativeText)
+
+
 def test_shortcut_registry_overrides_conflicts_and_persistence(app: QApplication, tmp_path: Any) -> None:
     from PySide6.QtCore import QSettings
     from PySide6.QtGui import QAction, QKeySequence
@@ -311,9 +318,10 @@ def test_shortcut_registry_overrides_conflicts_and_persistence(app: QApplication
         "view.reset_layout",
     )
     assert reg.categories() == ["File", "Analysis", "View"]
-    assert key_text(a_tl.shortcut()) == "Ctrl+Shift+T" and not e_tl.is_default and e_tl.default.toString() == "Ctrl+L"
+    assert key_text(a_tl.shortcut()) == _nat("Ctrl+Shift+T") and not e_tl.is_default
+    assert e_tl.default.toString() == "Ctrl+L"
     assert a_quit.shortcut().isEmpty() and not e_quit.is_default  # the empty override cleared the default
-    assert e_open.is_default and key_text(a_open.shortcut()) == "Ctrl+O"
+    assert e_open.is_default and key_text(a_open.shortcut()) == _nat("Ctrl+O")
 
     heard: list[int] = []
     reg.changed.connect(lambda: heard.append(1))
@@ -324,7 +332,7 @@ def test_shortcut_registry_overrides_conflicts_and_persistence(app: QApplication
     assert (
         [t.id for t in taken] == [e_open.id]
         and a_open.shortcut().isEmpty()
-        and key_text(a_plain.shortcut()) == "Ctrl+O"
+        and key_text(a_plain.shortcut()) == _nat("Ctrl+O")
     )
     assert (
         settings.value("shortcuts/view.reset_layout") == "Ctrl+O"
@@ -333,13 +341,13 @@ def test_shortcut_registry_overrides_conflicts_and_persistence(app: QApplication
     assert reg.conflicts(QKeySequence("Ctrl+O")) == [e_plain] and reg.conflicts(QKeySequence()) == []
     reg.reset(e_tl.id)
     assert e_tl.is_default and settings.value("shortcuts/analysis.timeline") is None
-    assert reg.overrides() == {"file.open_database_s": "", "file.quit": "", "view.reset_layout": "Ctrl+O"}
+    assert reg.overrides() == {"file.open_database_s": "", "file.quit": "", "view.reset_layout": _nat("Ctrl+O")}
     text = reg.as_text()
-    assert "File\n  Open database(s)" in text and "Reset layout" in text and "Ctrl+O" in text
+    assert "File\n  Open database(s)" in text and "Reset layout" in text and _nat("Ctrl+O") in text
     reg.reset_all()
     assert all(e.is_default for e in reg.entries()) and reg.overrides() == {}
     assert len(heard) == 3  # steal, reset, reset_all
-    assert settings.value("shortcuts/file.quit") is None and key_text(a_quit.shortcut()) == "Ctrl+Shift+X"
+    assert settings.value("shortcuts/file.quit") is None and key_text(a_quit.shortcut()) == _nat("Ctrl+Shift+X")
 
 
 def test_shortcuts_dialog_assign_clear_reset(app: QApplication, tmp_path: Any) -> None:
@@ -359,7 +367,8 @@ def test_shortcuts_dialog_assign_clear_reset(app: QApplication, tmp_path: Any) -
         top = dlg.tree.topLevelItem(t)
         for c in range(top.childCount()):
             rows[top.child(c).text(0)] = top.child(c)
-    assert rows["Alpha"].data(0, ID_ROLE) == ea.id and rows["Alpha"].text(1) == "Ctrl+1" and rows["Beta"].text(1) == ""
+    assert rows["Alpha"].data(0, ID_ROLE) == ea.id and rows["Alpha"].text(1) == _nat("Ctrl+1")
+    assert rows["Beta"].text(1) == ""
     assert "Copy selected rows" in "".join(k for k in rows)  # built-ins are listed too
     assert not dlg.assign_btn.isEnabled()
     dlg.tree.setCurrentItem(rows["Beta"])
@@ -369,7 +378,7 @@ def test_shortcuts_dialog_assign_clear_reset(app: QApplication, tmp_path: Any) -
     assert "already used by: Alpha" in dlg.conflict_label.text()
     dlg.key_edit.setKeySequence(QKeySequence("Ctrl+2"))
     dlg._assign()
-    assert b.shortcut().toString() == "Ctrl+2" and rows["Beta"].text(1) == "Ctrl+2" and not eb.is_default
+    assert b.shortcut().toString() == "Ctrl+2" and rows["Beta"].text(1) == _nat("Ctrl+2") and not eb.is_default
     dlg.tree.setCurrentItem(rows["Alpha"])
     dlg.clear_btn.click()
     assert a.shortcut().isEmpty() and rows["Alpha"].text(1) == "" and dlg.reset_btn.isEnabled()
@@ -377,5 +386,5 @@ def test_shortcuts_dialog_assign_clear_reset(app: QApplication, tmp_path: Any) -
     assert a.shortcut().toString() == "Ctrl+1" and not dlg.reset_btn.isEnabled()
     dlg.filter_edit.setText("beta")
     assert rows["Alpha"].isHidden() and not rows["Beta"].isHidden()
-    dlg.filter_edit.setText("ctrl+2")
+    dlg.filter_edit.setText(_nat("Ctrl+2").lower())
     assert not rows["Beta"].isHidden() and rows["Alpha"].isHidden()
