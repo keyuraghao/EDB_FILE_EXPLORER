@@ -337,7 +337,8 @@ def test_shortcut_registry_overrides_conflicts_and_persistence(app: QApplication
     text = reg.as_text()
     assert "File\n  Open database(s)" in text and "Reset layout" in text and "Ctrl+O" in text
     reg.reset_all()
-    assert all(e.is_default for e in reg.entries()) and reg.overrides() == {} and len(heard) == 3  # steal, reset, reset_all
+    assert all(e.is_default for e in reg.entries()) and reg.overrides() == {}
+    assert len(heard) == 3  # steal, reset, reset_all
     assert settings.value("shortcuts/file.quit") is None and key_text(a_quit.shortcut()) == "Ctrl+Shift+X"
 
 
