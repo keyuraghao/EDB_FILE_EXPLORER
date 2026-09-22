@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-21
+
 ### Changed
 - **Tables of any size load completely.** The grid used to stop at a *row limit* (1,000,000 by default) and
   silently show nothing past it. Loading now keeps the first rows of a table in memory (default 250,000) and spills bigger tables into a temporary SQLite cache (`core/rowstore.py`); the grid
