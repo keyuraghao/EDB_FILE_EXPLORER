@@ -23,6 +23,7 @@ KIND_ROLE = Qt.ItemDataRole.UserRole + 10
 DB_ID_ROLE = Qt.ItemDataRole.UserRole + 11
 TABLE_ROLE = Qt.ItemDataRole.UserRole + 12
 VIEW_ROLE = Qt.ItemDataRole.UserRole + 13
+FOLDER_ROLE = Qt.ItemDataRole.UserRole + 14
 
 _NUMERIC_TYPES = frozenset(
     {
@@ -386,8 +387,43 @@ class DatabaseTreeModel(QStandardItemModel):
         super().__init__(parent)
         self.setHorizontalHeaderLabels(["Name", "Rows", "Cols"])
         self._db_items: dict[str, QStandardItem] = {}
+        self._folder_items: dict[str, QStandardItem] = {}  # parent directory -> folder row
+
+    def folder_item(self, directory: str) -> QStandardItem:
+        """The top-level row for ``directory`` (created on first use); databases are grouped under it."""
+        item = self._folder_items.get(directory)
+        if item is not None:
+            return item
+        from edb_explorer.gui.icons import icon as glyph
+
+        item = QStandardItem(self._folder_label(directory))
+        item.setEditable(False)
+        item.setToolTip(directory)
+        item.setData("folder", KIND_ROLE)
+        item.setData(directory, FOLDER_ROLE)
+        item.setIcon(glyph("folder"))
+        item.setForeground(QColor("#8a9099"))
+        sub, cnt = QStandardItem(""), QStandardItem("")
+        sub.setEditable(False)
+        cnt.setEditable(False)
+        self.appendRow([item, sub, cnt])
+        self._folder_items[directory] = item
+        # two folders with the same name are told apart by their parent
+        for other_dir, other in self._folder_items.items():
+            if other is not item and other.text() == item.text():
+                other.setText(self._folder_label(other_dir, 2))
+                item.setText(self._folder_label(directory, 2))
+        return item
+
+    @staticmethod
+    def _folder_label(directory: str, parts: int = 1) -> str:
+        from pathlib import PurePath
+
+        tail = PurePath(directory).parts[-parts:]
+        return "/".join(tail) if tail else directory
 
     def add_database(self, db: EdbDatabase, icon: Any = None) -> QStandardItem:
+        folder = self.folder_item(str(db.path.parent))
         item = QStandardItem(db.path.name)
         item.setEditable(False)
         item.setToolTip(
@@ -403,7 +439,8 @@ class DatabaseTreeModel(QStandardItemModel):
         cols.setEditable(False)
         cols.setToolTip(f"{db.info.table_count} tables")
         cols.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.appendRow([item, sub, cols])
+        folder.appendRow([item, sub, cols])
+        self._refresh_folder_count(folder)
         try:
             from edb_explorer.core.exchange import is_exchange_database
 
@@ -463,10 +500,28 @@ class DatabaseTreeModel(QStandardItemModel):
         cols.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         return [name, rows, cols]
 
+    def _refresh_folder_count(self, folder: QStandardItem) -> None:
+        n = folder.rowCount()
+        cell = self.item(folder.row(), 2)
+        if cell is not None:
+            cell.setText(str(n))
+            cell.setToolTip(f"{n} database{'s' if n != 1 else ''} in this folder")
+            cell.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
     def remove_database(self, db_id: str) -> None:
         item = self._db_items.pop(db_id, None)
-        if item is not None:
+        if item is None:
+            return
+        folder = item.parent()
+        if folder is None:
             self.removeRow(item.row())
+            return
+        folder.removeRow(item.row())
+        if folder.rowCount() == 0:
+            self._folder_items.pop(folder.data(FOLDER_ROLE), None)
+            self.removeRow(folder.row())
+        else:
+            self._refresh_folder_count(folder)
 
     def update_counts(self, db: EdbDatabase) -> None:
         item = self._db_items.get(db.id)

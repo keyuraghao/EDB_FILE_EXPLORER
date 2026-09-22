@@ -131,6 +131,8 @@ class TableTab(QWidget):
         self.view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.view.setWordWrap(False)
         self.view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.view.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.view.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.view.customContextMenuRequested.connect(self._context_menu)
         hh = self.view.horizontalHeader()

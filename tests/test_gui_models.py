@@ -388,3 +388,70 @@ def test_shortcuts_dialog_assign_clear_reset(app: QApplication, tmp_path: Any) -
     assert rows["Alpha"].isHidden() and not rows["Beta"].isHidden()
     dlg.filter_edit.setText(_nat("Ctrl+2").lower())
     assert not rows["Beta"].isHidden() and rows["Alpha"].isHidden()
+
+
+def test_database_tree_groups_files_by_folder_and_pins_parents(app: QApplication, fake_edb: Any, tmp_path: Any) -> None:
+    from PySide6.QtCore import Qt
+
+    from edb_explorer.core import Session
+    from edb_explorer.gui.models import FOLDER_ROLE, KIND_ROLE
+    from edb_explorer.gui.widgets.database_tree import DatabaseTree
+
+    other_dir = tmp_path / "case2" / "SRUDB.dat"  # same file name in another folder
+    other_dir.parent.mkdir(parents=True)
+    other_dir.write_bytes(fake_edb.read_bytes())
+    sibling = tmp_path / "second.dat"
+    sibling.write_bytes(fake_edb.read_bytes())
+    same_name = tmp_path / "other" / "case2" / "x.dat"  # folder called case2 too -> disambiguated
+    same_name.parent.mkdir(parents=True)
+    same_name.write_bytes(fake_edb.read_bytes())
+
+    session = Session()
+    tree = DatabaseTree()
+    tree.resize(360, 240)
+    tree.show()
+    try:
+        dbs = [session.open(p) for p in (fake_edb, sibling, other_dir, same_name)]
+        for db in dbs:
+            tree.add_database(db)
+        app.processEvents()
+        model, proxy, view = tree.model, tree.proxy, tree.view
+        folders = [model.item(r, 0) for r in range(model.rowCount())]
+        assert [f.data(KIND_ROLE) for f in folders] == ["folder"] * 3
+        assert [f.rowCount() for f in folders] == [2, 1, 1]  # two files share the first folder
+        assert [f.data(FOLDER_ROLE) for f in folders] == [str(tmp_path), str(other_dir.parent), str(same_name.parent)]
+        assert (
+            folders[1].text() == "tmp_path/case2".replace("tmp_path", tmp_path.name)
+            and folders[2].text() == "other/case2"
+        )
+        assert model.item(0, 2).text() == "2" and folders[0].child(0, 0).text() == "SRUDB.dat"
+        assert view.textElideMode() == Qt.TextElideMode.ElideNone
+        assert view.isExpanded(proxy.index(0, 0)) and view.isExpanded(proxy.index(0, 0, proxy.index(0, 0)))
+
+        # sticky header: scroll into the first database's tables -> folder + database pinned
+        sb = view.verticalScrollBar()
+        sb.setValue(sb.maximum())
+        app.processEvents()
+        tree.sticky._refresh()
+        pinned = tree.sticky.pinned_labels()
+        assert tree.sticky.isVisible() and pinned and pinned[0] in {f.text() for f in folders}
+        sb.setValue(0)
+        app.processEvents()
+        tree.sticky._refresh()
+        assert tree.sticky.pinned_labels() == [] and not tree.sticky.isVisible()
+
+        # collapse keeps folders open, expand reopens the databases
+        tree.collapse_all()
+        assert view.isExpanded(proxy.index(0, 0)) and not view.isExpanded(proxy.index(0, 0, proxy.index(0, 0)))
+        tree.expand_all()
+        assert view.isExpanded(proxy.index(1, 0, proxy.index(0, 0)))
+
+        # removing the last file of a folder removes the folder row
+        tree.remove_database(dbs[2].id)
+        assert model.rowCount() == 2 and all(
+            f.data(FOLDER_ROLE) != str(other_dir.parent) for f in (model.item(r, 0) for r in range(2))
+        )
+        tree.remove_database(dbs[0].id)
+        assert model.item(0, 0).rowCount() == 1 and model.item(0, 2).text() == "1"
+    finally:
+        session.close_all()

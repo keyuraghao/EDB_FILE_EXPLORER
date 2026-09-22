@@ -162,6 +162,10 @@ def _g_open(p: QPainter) -> None:
     _folder(p, "#f0b64a", "#b07a12")
 
 
+def _g_folder(p: QPainter) -> None:
+    _folder(p, "#b8bec7", "#6e7781")
+
+
 def _g_scan(p: QPainter) -> None:
     _folder(p, "#f0b64a", "#b07a12")
     _magnifier(p, "#2f6fd6", 14.5, 14, 3.6, halo=True)
@@ -372,6 +376,7 @@ def _g_rows(p: QPainter) -> None:
 _GLYPHS: dict[str, Callable[[QPainter], None]] = {
     "open": _g_open,
     "scan": _g_scan,
+    "folder": _g_folder,
     "search": _g_search,
     "sql": _g_sql,
     "timeline": _g_timeline,

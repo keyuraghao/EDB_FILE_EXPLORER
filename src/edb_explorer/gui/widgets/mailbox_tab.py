@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QSettings, Qt, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -126,9 +126,12 @@ class MailboxTab(QWidget):
 
         outer = QSplitter(Qt.Orientation.Horizontal)
         self.tree = QTreeWidget()
+        self.tree.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.tree.setTextElideMode(Qt.TextElideMode.ElideNone)
         self.tree.setHeaderLabels(["Mailbox / folder", "Items"])
-        self.tree.setColumnWidth(0, 260)
-        self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.tree.header().setStretchLastSection(False)
+        self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.tree.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.tree.setAlternatingRowColors(True)
         self.tree.setIndentation(14)
@@ -157,6 +160,10 @@ class MailboxTab(QWidget):
         pl.addWidget(self.header)
         self.tabs = QTabWidget()
         self.body_view = QTextBrowser()
+        # e-mail HTML is authored for a white page (inline colours, black text): render it on "paper" in
+        # both themes instead of letting the dark palette turn it into black-on-dark
+        self.body_view.setObjectName("mailBody")
+        self.body_view.document().setDefaultStyleSheet("a { color: #0969da; }")
         self.body_view.setOpenExternalLinks(False)
         self.body_view.setOpenLinks(False)
         self.text_view = QPlainTextEdit()
@@ -371,9 +378,12 @@ class MailboxTab(QWidget):
         s = d.summary
         import html as _h
 
+        fg = QApplication.palette().color(QPalette.ColorRole.WindowText).name()  # the label itself is styled "dim"
+
         def row(k: str, v: str) -> str:
             return (
-                f"<tr><td style='color:#8a9099;padding-right:10px'><b>{k}</b></td><td>{_h.escape(v)}</td></tr>"
+                f"<tr><td style='color:#8a9099;padding-right:10px'><b>{k}</b></td>"
+                f"<td style='color:{fg}'>{_h.escape(v)}</td></tr>"
                 if v
                 else ""
             )

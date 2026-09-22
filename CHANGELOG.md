@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **Databases panel**: files are grouped under their parent folder (folder name shown, full path in the tooltip,
+  same-named folders disambiguated by their parent); a **sticky header** keeps the folder and database of the
+  rows you are scrolling through pinned at the top of the list (click it to jump back); names are never
+  truncated any more (the column sizes to the longest name and scrolls sideways); scrolling is per pixel, so
+  the wheel glides instead of jumping a row at a time. Grids and the mailbox tree scroll per pixel too.
+- **Mailbox viewer**: the message body is rendered on a white "paper" background in both themes, so e-mail HTML
+  (written for white pages, often with explicit black text) stays readable in the dark theme; header values use
+  the theme's text colour and mailbox / folder names are no longer elided.
+
 ## [0.6.0] - 2026-09-21
 
 ### Changed

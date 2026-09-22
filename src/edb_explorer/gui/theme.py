@@ -88,6 +88,8 @@ def _stylesheet(c: dict[str, str]) -> str:
         border: 1px solid {c["border"]}; border-radius: 4px; padding: 3px 6px; background: {c["base"]};
     }}
     QLineEdit:focus, QComboBox:focus {{ border-color: {c["highlight"]}; }}
+    QTextBrowser#mailBody {{ background: #ffffff; color: #1f2328; selection-background-color: #2f6fd6;
+                             selection-color: #ffffff; }}
     QTabBar::tab {{ padding: 6px 12px; border: 1px solid {c["border"]}; border-bottom: 0; margin-right: 1px;
                    border-top-left-radius: 4px; border-top-right-radius: 4px; background: {c["button"]}; }}
     QTabBar::tab:selected {{ background: {c["base"]}; }}
