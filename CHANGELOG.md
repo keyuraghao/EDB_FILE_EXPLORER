@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-09-22
+
 ### Changed
 - **Databases panel**: files are grouped under their parent folder (folder name shown, full path in the tooltip,
   same-named folders disambiguated by their parent); a **sticky header** keeps the folder and database of the
