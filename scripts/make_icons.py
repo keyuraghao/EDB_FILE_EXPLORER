@@ -12,10 +12,10 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from PySide6.QtCore import QSize  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtCore import QSize
+from PySide6.QtWidgets import QApplication
 
-from edb_explorer.gui.icons import app_icon  # noqa: E402
+from edb_explorer.gui.icons import app_icon
 
 
 def main() -> None:

@@ -7,9 +7,10 @@
 <p align="center">
   Cross-platform GUI, CLI and <a href="https://modelcontextprotocol.io">MCP server</a> for forensic database analysis.
   Opens <b>ESE</b> (<code>ntds.dit</code>, <code>SRUDB.dat</code>, Exchange, WebCache), <b>SQLite</b> (iOS, Android,
-  browsers, macOS, Windows apps), <b>LevelDB</b> (Chromium / Electron), <b>Access</b>, <b>dBase</b>, <b>Berkeley DB</b>
-  and <b>SQL / BSON dumps</b> - read-only - with SQL over any of them, a cross-database timeline, artifact views for
-  ~50 applications, multi-format extraction and analyst reports.
+  browsers, macOS, Windows apps), <b>Windows Event Logs</b> (<code>.evtx</code>), <b>LevelDB</b> (Chromium / Electron),
+  <b>Access</b>, <b>dBase</b>, <b>Berkeley DB</b> and <b>SQL / BSON dumps</b> - read-only - with SQL over any of them,
+  a cross-database timeline, artifact views for ~60 applications, multi-format extraction, analyst reports and
+  signed, encrypted project files for hand-over between machines.
 </p>
 
 <p align="center">
@@ -21,7 +22,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/main-dark.png" width="900" alt="EDB Explorer - SRUM and NTDS databases open, record inspector with hex view">
+  <img src="docs/screenshots/main-dark.png" width="900" alt="EDB Explorer - a Security event log, Chrome history and an iOS sms.db open, filtered grid and record inspector">
 </p>
 
 ---
@@ -63,7 +64,7 @@ Everything is **strictly read-only** - the tool never writes to an evidence file
   `EDB_EXPLORER_CACHE_DIR` works too).
 
 <p align="center">
-  <img src="docs/screenshots/welcome.png" width="900" alt="Welcome screen - Open files / Open recent / Scan folder">
+  <img src="docs/screenshots/welcome.png" width="900" alt="Welcome screen - Open files / Open recent / Scan folder / Import project">
 </p>
 
 - **Light and dark themes** (View ▸ Theme: Light / Dark / Follow system, or the sun / moon button at the right of the
@@ -74,7 +75,8 @@ Everything is **strictly read-only** - the tool never writes to an evidence file
 </p>
 
 **Application knowledge** (see [docs/formats.md](docs/formats.md))
-- 52 profiles: NTDS, SRUM, Exchange, WebCache, Windows Search, UAL, Windows Timeline, Notifications, Chrome/Edge
+- 57 profiles: NTDS, SRUM, Exchange, WebCache, Windows Search, UAL, Windows Timeline, Notifications, Windows
+  Security / System / Application / Sysmon event logs, Chrome/Edge
   history, cookies, logins, autofill, Firefox, Safari, iOS Messages, AddressBook, CallHistory, knowledgeC, Photos,
   Notes, Calendar, backup Manifest, WhatsApp (iOS + Android), Android contacts / calls / SMS / downloads / media,
   Telegram, Skype, Signal Desktop, Thunderbird, Zeitgeist, macOS Quarantine / TCC / Notification Center, Chromium
@@ -90,9 +92,7 @@ Everything is **strictly read-only** - the tool never writes to an evidence file
 - Export selected messages, a folder or a whole mailbox as **EML** (attachments embedded), **HTML**, **TXT** or
   **JSON**; save attachments; export the message list to xlsx/csv/pdf.
 
-<p align="center">
-  <img src="docs/screenshots/mailbox.png" width="900" alt="Exchange mailbox viewer - folders, message list and preview (contents blurred)">
-</p>
+*(No screenshot of the mailbox viewer: the only databases it opens are real mailboxes, which are case data.)*
 
 **AI agents inside the app** (`Ctrl+Shift+A`)
 - Embedded terminal running **Claude Code, OpenAI Codex CLI, Gemini CLI, GitHub Copilot CLI, Aider**, a shell
@@ -105,7 +105,7 @@ Everything is **strictly read-only** - the tool never writes to an evidence file
   attached as a schema so you can join a phone's messages against a laptop's browser history.
 
 <p align="center">
-  <img src="docs/screenshots/analysis-view.png" width="900" alt="Artifact view - SRUM network totals per application, run in the SQL console">
+  <img src="docs/screenshots/analysis-view.png" width="900" alt="Artifact view - failed logons from a Security event log, run in the SQL console">
 </p>
 
 - **Timeline**: every timestamp column of every table (detected by profile hints or value heuristics) becomes an
@@ -122,7 +122,7 @@ Everything is **strictly read-only** - the tool never writes to an evidence file
   database; double-click a hit to jump to the record.
 
 <p align="center">
-  <img src="docs/screenshots/search.png" width="900" alt="Find in databases - one SID across SRUM and NTDS">
+  <img src="docs/screenshots/search.png" width="900" alt="Find in databases - one string across an event log, browser history and messages">
 </p>
 
 **Extract** (`Ctrl+E`, right-click → *Extract selected rows…*)
@@ -145,6 +145,10 @@ case ID / analyst / notes → **HTML, PDF, DOCX, Markdown, XLSX, TXT, JSON**.
   altered after signing.
 - **Confidentiality**: a password encrypts the manifest and the embedded files with AES-256-GCM (scrypt-derived
   key); the signature stays verifiable without the password. Format details in [docs/projects.md](docs/projects.md).
+
+<p align="center">
+  <img src="docs/screenshots/project-import.png" width="820" alt="Import project - hash map verified, Ed25519 signature trusted, evidence located and SHA-256 checked">
+</p>
 
 ## Supported databases
 
@@ -187,7 +191,7 @@ pip install "edb-explorer[all]"          # GUI + MCP
 pip install "edb-explorer[mcp]"          # headless: CLI + MCP server only (no Qt)
 
 # or from a checkout
-git clone https://github.com/keyuraghao/EDB_FILE_EXPLORER && cd edb-explorer
+git clone https://github.com/keyuraghao/EDB_FILE_EXPLORER && cd EDB_FILE_EXPLORER
 uv sync --all-extras && uv run edb-explorer gui
 ```
 
@@ -214,6 +218,10 @@ edb-explorer gui SRUDB.dat sms.db "Local Storage/leveldb" places.sqlite
 | `Ctrl+Shift+D` | toggle light / dark theme |
 | `Ctrl+W` / `Ctrl+Shift+W` | close tab / close database |
 | `Ctrl+,` / `Ctrl+Shift+K` | preferences / keyboard shortcuts |
+
+<p align="center">
+  <img src="docs/screenshots/shortcuts.png" width="820" alt="Keyboard shortcuts - every action by menu, rebindable, conflicts flagged">
+</p>
 
 These are the defaults. **Settings ▸ Keyboard shortcuts…** (`Ctrl+Shift+K`, also under Help) lists every menu
 action grouped by menu with its current and default key; select one, press the new combination and *Assign* (or
@@ -315,10 +323,14 @@ src/edb_explorer/
 │   ├── sqlworkspace.py   SQL over any backend (materialised into SQLite, one schema per database)
 │   ├── analysis.py       timestamp detection, column statistics, timeline, summary
 │   ├── exchange/         Exchange store: ProP property blobs, RTF, mailboxes/folders/messages, EML/HTML export
+│   ├── rowstore.py       disk-backed row store so grids can hold tables of any size (SQLite cache, sort/filter views)
+│   ├── project.py        .edbproj project files: SHA-256 hash map, Ed25519 signing, AES-256-GCM encryption
 │   ├── agents.py         AI agent CLI detection and MCP registration (Claude Code, Codex, Gemini, Copilot)
-│   ├── search.py, formats.py, export.py, report.py
-├── gui/                  PySide6 application (welcome page, task panel, mailbox viewer, embedded terminal, dialogs)
+│   ├── search.py, formats.py, export.py, report.py, updates.py
+├── gui/                  PySide6 application (welcome page, task panel, mailbox viewer, embedded terminal, dialogs,
+│                         rebindable shortcuts, preferences)
 ├── mcp/                  MCP server built on the core
+├── portable.py           portable mode (portable.txt beside the executable -> state in ./data)
 └── cli.py                Typer CLI
 ```
 
@@ -345,11 +357,16 @@ events, _ = build_timeline([phone, laptop, srum], limit=10_000)
 
 ```bash
 uv sync --all-extras
-uv run pytest                                     # 50+ unit tests on a fake ESE backend, no evidence needed
+uv run pytest                                     # 100+ unit tests on fake / synthetic fixtures, no evidence needed
 EDB_EXPLORER_TEST_DB=/path/to/any.edb uv run pytest -m integration
 uv run ruff check src tests && uv run ruff format src tests && uv run mypy src/edb_explorer/core
-./packaging/build.sh                              # Linux/macOS bundle   (Windows: packaging\build.ps1)
+./packaging/build.sh                              # Linux/macOS bundles, .deb, portable   (Windows: packaging\build.ps1)
+python scripts/make_demo_data.py                  # synthetic evidence folder (History, sms.db, Security.evtx)
+python scripts/make_screenshots.py                # regenerate docs/screenshots from that synthetic data
 ```
+
+Screenshots and demo data never come from real evidence: `scripts/make_demo_data.py` generates deterministic
+fake databases and `scripts/make_screenshots.py` drives the real GUI offscreen with a neutral user and host name.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the layout, how to add a database profile and the
 release process, and [SECURITY.md](SECURITY.md) for MCP hardening notes.

@@ -6,6 +6,26 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-09-22
+
+First stable release. The feature set of 0.8.x is complete and verified on Linux, Windows and macOS; this
+version is a repository-wide audit for information leakage and stale documentation.
+
+### Changed
+- **Every screenshot is now generated from synthetic data** (`scripts/make_demo_data.py` +
+  `scripts/make_screenshots.py`): a fake Chromium `History`, an iOS `sms.db` and a Windows `Security.evtx`
+  with made-up users, hosts, domains, numbers and dates, shown under a neutral user / host name. The previous
+  images, although scrubbed of names, still exposed a real domain SID, service names, dates and record counts
+  from case evidence. The blurred mailbox screenshot was dropped: real mailbox content is case data.
+- The Debian package no longer embeds a personal e-mail address as maintainer.
+- README, CONTRIBUTING, SECURITY, `docs/mcp.md`, the About dialog, the CLI banner, the scan dialog and the
+  default report title no longer describe the tool as ESE-only; the README lists all install variants, the
+  project / shortcut screenshots, 57 profiles, the new modules (`rowstore`, `project`, `portable`, `updates`)
+  and the commit-then-tag release procedure; the clone directory name was corrected.
+- Opening the first database now shows its profile's primary table (Chrome `urls`, iOS `message` ...) instead
+  of whatever sorts first alphabetically (`meta`).
+- The welcome page lists Windows Event Logs among the formats.
+
 ## [0.8.1] - 2026-09-22
 
 ### Fixed

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "edb-explorer"
-version = "0.8.1"
+version = "1.0.0"
 description = "Cross-platform GUI, CLI and MCP server for forensic database analysis: ESE (ntds.dit, SRUDB, Exchange), SQLite (iOS/Android/browsers/macOS/Windows apps), LevelDB, Access, DBF, Berkeley DB and SQL/BSON dumps - with SQL, timelines and reports."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -106,6 +106,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["PLR", "S101", "E501"]
+"scripts/*" = ["E402", "E501"]  # sys.path setup before imports; long literal tables
 "src/edb_explorer/core/report.py" = ["E501", "N806"]  # long HTML/markup template strings
 "src/edb_explorer/core/formats.py" = ["E501"]
 "src/edb_explorer/core/profiles.py" = ["E501"]  # SQL views and descriptions read better unwrapped

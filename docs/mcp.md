@@ -46,7 +46,7 @@ EDB_EXPLORER_ALLOWED_PATHS=/cases/001/evidence:/mnt/images edb-explorer mcp   # 
 | Tool | Purpose | Key arguments |
 |---|---|---|
 | `open_database` | open a file, returns metadata and its `id` | `path`, `id?` |
-| `scan_directory` | find ESE files by signature | `path`, `recursive`, `max_files` |
+| `scan_directory` | find every supported database by signature | `path`, `recursive`, `max_files` |
 | `list_databases` | open databases | |
 | `close_database` | release a file | `db` |
 | `get_database_info` | header fields, timestamps, profile, optional SHA-256 | `db`, `include_header`, `compute_hash` |

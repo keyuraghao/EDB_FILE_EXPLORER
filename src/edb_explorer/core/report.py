@@ -67,7 +67,7 @@ def build_report(
             raise ExportError("Report generation cancelled")
 
     report: dict[str, Any] = {
-        "title": opts.title or f"ESE database report - {', '.join(db.path.name for db in databases)}",
+        "title": opts.title or f"Database report - {', '.join(db.path.name for db in databases)}",
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "generator": f"{__app_name__} {__version__}",
         "case_id": opts.case_id,

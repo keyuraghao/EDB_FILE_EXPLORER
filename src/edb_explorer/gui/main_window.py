@@ -380,7 +380,7 @@ class MainWindow(QMainWindow):
         worker.progress.connect(lambda m: task.progress(detail=str(m)))
         worker.result.connect(
             lambda r: (
-                self._opened(r),
+                self._opened(r, auto_open=db_id is None),  # a project / session restore opens its own tabs
                 task.finish(
                     f"{r[0][0].info.kind_name} · {r[0][0].profile.name} · {r[0][0].info.table_count} tables"
                     if r[0]
@@ -508,7 +508,7 @@ class MainWindow(QMainWindow):
             f"Project opened: {len(self.session)} database(s), {opened_tabs} tab(s) restored", 10000
         )
 
-    def _opened(self, result: tuple[list[EdbDatabase], dict[str, str]]) -> None:
+    def _opened(self, result: tuple[list[EdbDatabase], dict[str, str]], auto_open: bool = True) -> None:
         opened, errors = result
         for db in opened:
             if self.tree.model.database_item(db.id) is None:
@@ -519,7 +519,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(
                 f"Opened {', '.join(d.path.name for d in opened)} · {len(self.session)} database(s) open", 8000
             )
-            if self.tabs.count() == 1 and self.tabs.widget(0) is self._placeholder and len(opened) == 1:
+            if auto_open and self.tabs.count() == 1 and self.tabs.widget(0) is self._placeholder and len(opened) == 1:
                 # first database: open its most useful view automatically
                 from edb_explorer.core.exchange import is_exchange_database
 
@@ -527,8 +527,11 @@ class MainWindow(QMainWindow):
                     self.show_mailboxes(opened[0].id)
                 else:
                     tables = opened[0].tables(include_system=False)
-                    if tables:
-                        self.open_table(opened[0].id, tables[0].name)
+                    names = {t.name for t in tables}
+                    # the profile lists its tables most-useful first (urls before meta, messages before handles)
+                    preferred = next((n for n in opened[0].profile.table_names if n in names), None)
+                    if preferred or tables:
+                        self.open_table(opened[0].id, preferred or tables[0].name)
         if errors:
             QMessageBox.warning(
                 self, "Some files could not be opened", "\n\n".join(f"{p}\n{e}" for p, e in errors.items())

@@ -24,7 +24,7 @@ Section: utils
 Priority: optional
 Architecture: $ARCH
 Installed-Size: $SIZE
-Maintainer: Keyur Aghao <kaghao@andrew.cmu.edu>
+Maintainer: Keyur Aghao <keyuraghao@users.noreply.github.com>
 Depends: libegl1, libgl1, libxkbcommon0, libdbus-1-3, libfontconfig1, libxcb-cursor0 | libxcb1
 Homepage: https://github.com/keyuraghao/EDB_FILE_EXPLORER
 Description: Forensic explorer for ESE, SQLite, LevelDB, Access, DBF and Windows Event Log files

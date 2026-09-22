@@ -77,7 +77,7 @@ class WelcomePage(QWidget):
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         outer.addWidget(title)
         sub = QLabel(
-            f"v{__version__}  ·  ESE · SQLite · LevelDB · Access · DBF · Berkeley DB · SQL & BSON dumps\n"
+            f"v{__version__}  ·  ESE · SQLite · LevelDB · Access · DBF · Berkeley DB · SQL & BSON dumps · Windows Event Logs\n"
             "Windows, macOS, iOS, Android, Linux and server databases - read-only, with SQL analysis and reports"
         )
         sub.setObjectName("dim")

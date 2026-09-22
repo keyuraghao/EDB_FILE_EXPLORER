@@ -26,7 +26,7 @@ from edb_explorer.core.values import display_value, interpret_timestamp
 app = typer.Typer(
     name="edb-explorer",
     help=(
-        f"{__app_name__} - explore Microsoft ESE databases (.edb/.dit/.dat) from a GUI, CLI or MCP server.\n\n"
+        f"{__app_name__} - forensic explorer for ESE, SQLite, LevelDB, Access, DBF, Berkeley DB, SQL / BSON dumps and Windows Event Logs, from a GUI, CLI or MCP server.\n\n"
         "Run without a command (or double-click the executable) to open the desktop GUI."
     ),
     invoke_without_command=True,

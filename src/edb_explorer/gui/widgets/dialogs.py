@@ -454,7 +454,7 @@ class ReportDialog(QDialog):
 
         form = QFormLayout()
         self.title = QLineEdit()
-        self.title.setPlaceholderText("Optional - defaults to 'ESE database report - <files>'")
+        self.title.setPlaceholderText("Optional - defaults to 'Database report - <files>'")
         self.case_id = QLineEdit()
         self.analyst = QLineEdit(str(QSettings().value("report_analyst", "")))
         self.notes = QPlainTextEdit()
@@ -594,14 +594,14 @@ class ReportDialog(QDialog):
 
 # --------------------------------------------------------------------------- #
 class ScanDialog(QDialog):
-    """Pick a directory, find every ESE file in it (by magic), choose which to open."""
+    """Pick a directory, find every supported database in it (by signature), choose which to open."""
 
     def __init__(self, session: Session, start_dir: str | None = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.session = session
         self.selected: list[str] = []
         self._worker: FunctionWorker | None = None
-        self.setWindowTitle("Open folder - scan for ESE databases")
+        self.setWindowTitle("Open folder - scan for databases")
         self.resize(760, 460)
         layout = QVBoxLayout(self)
         row = QHBoxLayout()
@@ -675,7 +675,7 @@ class ScanDialog(QDialog):
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Checked if size > 0 else Qt.CheckState.Unchecked)
             self.list.addItem(item)
-        self.status.setText(f"{len(paths)} ESE database(s) found.")
+        self.status.setText(f"{len(paths)} database(s) found.")
 
     def _check_all(self, checked: bool) -> None:
         for i in range(self.list.count()):
@@ -741,10 +741,11 @@ class AboutDialog(QDialog):
         title = QLabel(f"<h2>{__app_name__} {__version__}</h2>")
         layout.addWidget(title)
         body = QLabel(
-            "<p>A cross-platform explorer for Microsoft Extensible Storage Engine (ESE / JET Blue) databases: "
-            "Active Directory <code>ntds.dit</code>, SRUM <code>SRUDB.dat</code>, Exchange <code>.edb</code>, "
-            "<code>WebCacheV01.dat</code>, <code>Windows.edb</code> and more.</p>"
-            "<p>Parsing is powered by <a href='https://github.com/fox-it/dissect.esedb'>dissect.esedb</a>; the UI by "
+            "<p>A cross-platform forensic explorer for ESE / JET Blue (<code>ntds.dit</code>, SRUM, Exchange, WebCache), "
+            "SQLite (phones, browsers, macOS and Windows apps), Windows Event Logs, LevelDB, Access, dBase, Berkeley DB "
+            "and SQL / BSON dumps - with SQL over any of them, timelines, artifact views, reports and signed project files.</p>"
+            "<p>Parsing is powered by <a href='https://github.com/fox-it/dissect.esedb'>dissect</a>, "
+            "<a href='https://github.com/omerbenamram/pyevtx-rs'>evtx</a> and friends; the UI by "
             "<a href='https://www.qt.io/qt-for-python'>PySide6</a>. The bundled MCP server exposes the same data to AI "
             "agents (<code>edb-explorer mcp</code>).</p>"
             "<p>All access is strictly read-only. MIT licensed.</p>"
