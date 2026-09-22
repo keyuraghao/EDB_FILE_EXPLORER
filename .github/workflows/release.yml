@@ -32,7 +32,12 @@ jobs:
           - os: windows-latest
             script: powershell -ExecutionPolicy Bypass -File packaging/build.ps1
             artifact: windows
+          - os: macos-14          # Apple Silicon; the .dmg is unsigned (see README-macOS.txt inside)
+            script: ./packaging/build.sh
+            artifact: macos
+            experimental: true
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.experimental || false }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -59,6 +64,10 @@ jobs:
             dist/*.zip.sha256
             dist/*-setup.exe
             dist/*-setup.exe.sha256
+            dist/*.deb
+            dist/*.deb.sha256
+            dist/*.dmg
+            dist/*.dmg.sha256
 
   docker:
     runs-on: ubuntu-latest

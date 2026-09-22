@@ -129,5 +129,8 @@ coll = COLLECT(
     strip=False, upx=False, name=f"edb-explorer-{__version__}",
 )
 if IS_MAC:
-    app = BUNDLE(coll, name="EDB Explorer.app", icon=str(RES / "icon.png"), bundle_identifier="io.github.edbexplorer",
-                 info_plist={"CFBundleShortVersionString": __version__, "NSHighResolutionCapable": True})
+    _icns = RES / "icon.icns"
+    app = BUNDLE(coll, name="EDB Explorer.app", icon=str(_icns) if _icns.exists() else None,
+                 bundle_identifier="io.github.edbexplorer",
+                 info_plist={"CFBundleShortVersionString": __version__, "NSHighResolutionCapable": True,
+                             "LSApplicationCategoryType": "public.app-category.utilities"})

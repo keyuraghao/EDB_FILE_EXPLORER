@@ -209,3 +209,32 @@ def test_export_progress_cancel(session: Session, tmp_path: Path) -> None:
     # progress fires every 500 rows; with 25 rows it never fires, export completes
     assert export_table(db, "Network Data Usage", tmp_path / "x.csv", progress=progress) == 25
     assert calls == []
+
+
+def test_portable_mode_redirects_state(tmp_path, monkeypatch) -> None:
+    from edb_explorer import portable
+
+    monkeypatch.delenv("EDB_EXPLORER_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("EDB_EXPLORER_CACHE_DIR", raising=False)
+    monkeypatch.delenv("EDB_EXPLORER_PORTABLE_ROOT", raising=False)
+    assert portable.portable_root() is None and portable.activate() is None  # not frozen, no marker
+    root = tmp_path / "EDB-Explorer-portable"
+    root.mkdir()
+    monkeypatch.setenv("EDB_EXPLORER_PORTABLE_ROOT", str(root))
+    data = portable.activate()
+    assert data == root / "data" and (data / "config").is_dir() and (data / "cache").is_dir()
+    import os
+
+    assert os.environ["EDB_EXPLORER_CONFIG_DIR"] == str(data / "config")
+    assert os.environ["EDB_EXPLORER_CACHE_DIR"] == str(data / "cache")
+    from edb_explorer.core.project import SigningIdentity, config_dir
+
+    assert config_dir() == data / "config"
+    SigningIdentity.load_or_create()
+    assert (data / "config" / "signing_key.pem").exists()
+    from edb_explorer.core import ColumnInfo
+    from edb_explorer.core.rowstore import DiskRowStore
+
+    st = DiskRowStore([ColumnInfo(1, "a", "Long", 0, "fixed", None, None, False, False)])
+    assert st.path.startswith(str(data / "cache"))
+    st.close()

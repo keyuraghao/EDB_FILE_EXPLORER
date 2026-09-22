@@ -18,6 +18,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QFont, QPainter, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QHBoxLayout,
     QHeaderView,
     QLineEdit,
@@ -154,6 +155,7 @@ class DatabaseTree(QWidget):
     mailboxes_activated = Signal(str)  # db_id (Exchange)
     stats_requested = Signal(str, str)
     sql_requested = Signal(str)
+    reveal_requested = Signal(str)  # file path to show in the file manager
 
     def __init__(self, parent: Any = None) -> None:
         super().__init__(parent)
@@ -297,6 +299,15 @@ class DatabaseTree(QWidget):
         menu.addAction("Count records in all tables", lambda: self.count_requested.emit(db_id))
         menu.addAction("Export database…", lambda: self.export_requested.emit(db_id))
         menu.addSeparator()
+        db_item = src
+        while db_item.isValid() and db_item.data(KIND_ROLE) != "db":
+            db_item = db_item.parent()
+        if db_item.isValid():
+            file_path = str(db_item.data(Qt.ItemDataRole.ToolTipRole) or "").split("\n", 1)[0]
+            if file_path:
+                menu.addAction("Show file in folder", lambda: self.reveal_requested.emit(file_path))
+                menu.addAction("Copy file path", lambda: QApplication.clipboard().setText(file_path))
+                menu.addSeparator()
         menu.addAction("Close database", lambda: self.close_requested.emit(db_id))
         menu.exec(self.view.viewport().mapToGlobal(pos))
 

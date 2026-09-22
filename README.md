@@ -168,11 +168,14 @@ The full list of profiles, their signature tables and views is in [docs/formats.
 
 Grab the build for your OS from the [releases page](https://github.com/keyuraghao/EDB_FILE_EXPLORER/releases):
 
-| OS | File | How to run |
+| OS | Full install | Portable |
 |---|---|---|
-| Windows | `EDB-Explorer-<ver>-setup.exe` | run the installer → **EDB Explorer** appears in the Start Menu / desktop (no console window) |
-| Windows (portable) | `edb-explorer-<ver>-windows-x64.zip` | unzip, double-click `EDB-Explorer.exe` |
-| Linux | `edb-explorer-<ver>-linux-x86_64.tar.gz` | extract, double-click `EDB-Explorer`, or run `./install.sh` once to add it to your app menu |
+| Windows | `EDB-Explorer-<ver>-setup.exe` - Start Menu / desktop shortcuts, optional `.edb` association and `edb-explorer` on PATH. Uninstall from *Apps & features* (or the Start Menu entry); the uninstaller offers to remove your settings, signing key and caches too. | `EDB-Explorer-<ver>-windows-x64-portable.zip` - unzip anywhere, run `EDB-Explorer.exe`. Settings, keys and caches stay in its `data` folder (nothing touches the registry or your profile). Uninstall with `Uninstall.cmd` or by deleting the folder. |
+| Linux | `edb-explorer_<ver>_amd64.deb` - `sudo apt install ./edb-explorer_<ver>_amd64.deb`, remove with `sudo apt remove edb-explorer`. Or `edb-explorer-<ver>-linux-x86_64.tar.gz` - extract, `./install.sh` adds a menu entry and `~/.local/bin/edb-explorer`; `./uninstall.sh` removes it (optionally with your data and the folder). | `EDB-Explorer-<ver>-linux-x86_64-portable.tar.gz` - extract, run `./EDB-Explorer`; everything lives in `data`. Uninstall = delete the folder. |
+| macOS (Apple Silicon) | `EDB-Explorer-<ver>-macos-arm64.dmg` - drag to Applications; unsigned, so right-click ▸ Open on first launch (or `xattr -dr com.apple.quarantine`). The disk image also carries *Uninstall EDB Explorer.command*. | `EDB-Explorer-<ver>-macos-arm64-portable.zip` - unzip, run the app from the folder; state stays in `data`. |
+
+A `portable.txt` file next to the executable is what switches the app into portable mode; the installed
+variants never write there. Every checksum is published as a `.sha256` file next to the download.
 
 Each bundle also contains the `edb-explorer` console program for the CLI and MCP server. Running it
 without arguments opens the GUI too.

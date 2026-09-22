@@ -6,6 +6,33 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-22
+
+### Added
+- **Installers for every platform, full and portable, all uninstallable.** Windows: `-setup.exe` (Start Menu,
+  *Apps & features* uninstaller that now also offers to remove settings, signing key, trusted signers and caches)
+  and `-windows-x64-portable.zip` (`Uninstall.cmd`). Linux: `.deb` (`apt remove edb-explorer`), tarball with
+  `install.sh` / `uninstall.sh`, and `-portable.tar.gz`. macOS (Apple Silicon, unsigned): `.dmg` with
+  *Uninstall EDB Explorer.command*, and `-portable.zip`. **Portable mode**: a `portable.txt` marker next to the
+  executable keeps settings, keys and the disk cache in `./data` - nothing is written to the registry or the
+  user profile, deleting the folder removes everything.
+- Quality-of-life pass over the GUI: the last session (databases + tabs + layout) is saved on exit and reopened
+  at startup (Settings ▸ Preferences ▸ Startup, *File ▸ Reopen last session*, welcome-page link); middle-click
+  closes a tab, tab context menu gains *Close tabs to the right*, *Reload*, *Column statistics*, *Show file in
+  folder*; table tabs show their database's icon and the window title names the current table; recent-files
+  menu shows names with numbered accelerators, greys out missing files and can prune them; table grid: `Ctrl+G`
+  go to row, `F5` reload, `Esc` clears the filter, filter restricted to one column (header menu or the "all
+  columns" button; also on disk-cached tables), *Sort ascending / descending* in the header menu, copy rows as
+  JSON or a Markdown table; record inspector: *Copy record* as JSON / `name = value` / Markdown; SQL console:
+  persisted query *History*; Find dialog: Enter jumps to the selected hit, *Copy hits*, *Extract hits…*, last
+  query and options remembered; Databases panel: *Show file in folder*, *Copy file path*; welcome page: *Import
+  project*; *Help ▸ Check for updates…* (GitHub releases, on request only); quitting while a project export /
+  import runs asks first.
+
+### Fixed
+- The Open dialog was titled "Open ESE database(s)" although every format is accepted; a stray separator at the
+  end of the Tools menu; the project CLI test depended on the terminal width.
+
 ## [0.7.0] - 2026-09-22
 
 ### Added

@@ -18,6 +18,11 @@ def run(files: list[str] | None = None) -> int:
     from edb_explorer.gui.theme import apply_theme
 
     logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(levelname)s %(name)s: %(message)s")
+    from edb_explorer import portable
+
+    data = portable.activate()  # portable builds keep settings / keys / caches next to the executable
+    if data:
+        logging.getLogger(__name__).info("Portable mode: user data in %s", data)
     QCoreApplication.setOrganizationName("EDB Explorer")
     QCoreApplication.setOrganizationDomain("edb-explorer.local")
     QCoreApplication.setApplicationName(__app_name__)

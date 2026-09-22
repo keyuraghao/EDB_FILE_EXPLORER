@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -511,3 +512,129 @@ def test_main_window_export_and_reimport_project(
     assert tabs[0].filter_edit.text() == "chrome" and win2._sql_tab is not None
     assert win2._sql_tab.editor.toPlainText() == "SELECT 1" and win2.tabs.currentIndex() == 0
     win2.close()
+
+
+def test_table_tab_column_filter_goto_and_copy_formats(app: QApplication, fake_edb: Any) -> None:
+    import json
+    import time
+
+    from edb_explorer.core import Session
+    from edb_explorer.gui.widgets.table_tab import TableTab
+
+    session = Session()
+    db = session.open(fake_edb)
+    tab = TableTab(db, db.table("{973F5D5C-1D90-4944-BE8E-24B94231A174}"), memory_rows=10**9)
+    try:
+        deadline = time.time() + 20
+        while not tab._finished and time.time() < deadline:
+            app.processEvents()
+            time.sleep(0.005)
+        assert tab._finished and tab.model.rowCount() == 25
+        # "1" matches almost every row across columns; scoped to BytesRecvd (7*i) only 14, 21, 28, ... contain "1"
+        tab.filter_edit.setText("1")
+        tab.apply_filter()
+        all_cols = tab.proxy.rowCount()
+        tab.set_filter_column(tab.model.column_position("BytesRecvd"))
+        assert tab.column_scope.text() == "BytesRecvd" and 0 < tab.proxy.rowCount() < all_cols
+        scoped = {tab.proxy.index(r, 0).data(RAW_ROLE) for r in range(tab.proxy.rowCount())}
+        assert all("1" in str(7 * i) for i in scoped)
+        tab.set_filter_column(None)
+        assert tab.column_scope.text() == "all columns" and tab.proxy.rowCount() == all_cols
+        tab.filter_edit.setText("")
+        tab.apply_filter()
+        assert tab.select_row_index(7) and tab.selected_rows()[0]["AutoIncId"] == 8
+        tab.copy_selection("json")
+        rec = json.loads(app.clipboard().text())
+        assert rec[0]["_row"] == 7 and rec[0]["AutoIncId"] == "8" and "TimeStamp" in rec[0]
+        tab.copy_selection("markdown")
+        md = app.clipboard().text().splitlines()
+        assert md[0].startswith("| AutoIncId") and md[1].startswith("|---") and "| 8" in md[2]
+        tab.copy_selection()
+        assert app.clipboard().text().splitlines()[1].startswith("8\t")
+    finally:
+        tab.shutdown()
+        session.close_all()
+
+
+def test_main_window_saves_and_reopens_last_session(
+    app: QApplication, fake_edb: Any, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import time
+
+    from PySide6.QtCore import QSettings
+
+    import edb_explorer.gui.main_window as mw
+    from edb_explorer.gui.widgets.table_tab import TableTab
+
+    monkeypatch.setenv("EDB_EXPLORER_CONFIG_DIR", str(tmp_path / "cfg"))
+    ini = str(tmp_path / "s.ini")
+    monkeypatch.setattr(mw, "QSettings", lambda *a, **k: QSettings(ini, QSettings.Format.IniFormat))
+
+    def pump(cond: Any, timeout: float = 30.0) -> None:
+        deadline = time.time() + timeout
+        while not cond() and time.time() < deadline:
+            app.processEvents()
+            time.sleep(0.005)
+        assert cond(), "timed out"
+
+    win = mw.MainWindow()
+    win.show()
+    assert win.last_session() is None and not win._placeholder.btn_session.isVisible()
+    win.open_files([str(fake_edb)])
+    pump(lambda: len(win.session) == 1)
+    tab = win.open_table("srudb", "SruDbIdMapTable")
+    assert tab is not None
+    pump(lambda: tab._finished)
+    assert win.windowTitle().startswith("SRUM ID Map") and "SRUDB.dat" in win.windowTitle()
+    win.close()
+    app.processEvents()
+    saved = QSettings(ini, QSettings.Format.IniFormat).value("last_session")
+    assert saved and "SruDbIdMapTable" in str(saved)
+
+    win2 = mw.MainWindow()  # restore_session defaults to on -> reopened on the next event-loop turn
+    win2.show()
+    pump(
+        lambda: (
+            len(win2.session) == 1 and any(isinstance(win2.tabs.widget(i), TableTab) for i in range(win2.tabs.count()))
+        )
+    )
+    assert win2.session.get("srudb").path == fake_edb.resolve()
+    win2.close()
+    app.processEvents()
+
+    QSettings(ini, QSettings.Format.IniFormat).setValue("restore_session", False)
+    win3 = mw.MainWindow()
+    win3.show()
+    for _ in range(20):
+        app.processEvents()
+    assert len(win3.session) == 0 and win3._placeholder.btn_session.isVisible()  # offered, not forced
+    win3.close()
+
+
+def test_update_check_version_parsing() -> None:
+    from edb_explorer.core.updates import parse_version
+
+    assert parse_version("v0.7.1") == (0, 7, 1) and parse_version("0.10.0") > parse_version("0.9.9")
+    assert parse_version("v1.0.0-rc1") == (1, 0, 0) and parse_version("garbage") == (0,)
+
+
+def test_portable_mode_redirects_qsettings(app: QApplication, tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    from PySide6.QtCore import QSettings
+
+    from edb_explorer import portable
+
+    root = tmp_path / "portable"
+    root.mkdir()
+    monkeypatch.setenv("EDB_EXPLORER_PORTABLE_ROOT", str(root))
+    monkeypatch.delenv("EDB_EXPLORER_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("EDB_EXPLORER_CACHE_DIR", raising=False)
+    old_format = QSettings.defaultFormat()
+    try:
+        assert portable.activate() == root / "data"
+        s = QSettings()  # the no-argument form the application uses (org / app names from QCoreApplication)
+        s.setValue("probe", 1)
+        s.sync()
+        assert s.format() == QSettings.Format.IniFormat and s.fileName().startswith(str(root / "data" / "settings"))
+        assert Path(s.fileName()).exists()
+    finally:
+        QSettings.setDefaultFormat(old_format)  # other tests use explicit ini paths, the redirect is harmless

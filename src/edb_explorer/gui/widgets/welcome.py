@@ -61,6 +61,8 @@ class WelcomePage(QWidget):
     open_recent = Signal(str)
     scan_folder = Signal()
     clear_recent = Signal()
+    import_project = Signal()
+    reopen_session = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -88,13 +90,22 @@ class WelcomePage(QWidget):
         self.btn_open = _BigButton("Open files", "Import one or more database files", "open")
         self.btn_recent = _BigButton("Open recent", "Pick from recently opened files", "history")
         self.btn_scan = _BigButton("Scan folder", "Find every database in a folder or image", "scan")
+        self.btn_project = _BigButton("Import project", "Open a shared .edbproj case file", "project")
         self.btn_open.clicked.connect(self.open_files)
         self.btn_recent.clicked.connect(self._toggle_recent)
         self.btn_scan.clicked.connect(self.scan_folder)
-        for b in (self.btn_open, self.btn_recent, self.btn_scan):
+        self.btn_project.clicked.connect(self.import_project)
+        for b in (self.btn_open, self.btn_recent, self.btn_scan, self.btn_project):
             row.addWidget(b)
         outer.addLayout(row)
-        outer.addSpacing(12)
+        outer.addSpacing(8)
+        self.btn_session = QPushButton("Reopen last session")
+        self.btn_session.setFlat(True)
+        self.btn_session.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_session.clicked.connect(self.reopen_session)
+        self.btn_session.hide()
+        outer.addWidget(self.btn_session, 0, Qt.AlignmentFlag.AlignCenter)
+        outer.addSpacing(4)
 
         self.recent_box = QWidget()
         rl = QVBoxLayout(self.recent_box)
@@ -136,6 +147,12 @@ class WelcomePage(QWidget):
         self.btn_recent.setEnabled(bool(paths))
         if not paths:
             self.recent_box.hide()
+
+    def set_last_session(self, description: str | None) -> None:
+        """Show the 'Reopen last session' link when there is one to reopen."""
+        self.btn_session.setVisible(bool(description))
+        if description:
+            self.btn_session.setText(f"Reopen last session  -  {description}")
 
     def _toggle_recent(self) -> None:
         self.recent_box.setVisible(not self.recent_box.isVisible())

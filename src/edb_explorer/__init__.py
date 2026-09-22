@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 __app_name__ = "EDB Explorer"
 
 __all__ = ["__app_name__", "__version__"]

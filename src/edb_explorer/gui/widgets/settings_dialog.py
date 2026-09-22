@@ -9,6 +9,7 @@ from typing import Any
 
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -181,6 +182,16 @@ class SettingsDialog(QDialog):
         layout.addWidget(cbox)
         layout.addStretch(1)
 
+        start = QGroupBox("Startup")
+        sl = QVBoxLayout(start)
+        self.restore_session = QCheckBox("Reopen the databases and tabs of the last session when the app starts")
+        self.restore_session.setChecked(settings.value("restore_session", True, type=bool))
+        self.restore_session.setToolTip(
+            "Files given on the command line or dropped on the window win over the last session"
+        )
+        sl.addWidget(self.restore_session)
+        layout.addWidget(start)
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
             Qt.Orientation.Horizontal,
@@ -236,6 +247,7 @@ class SettingsDialog(QDialog):
             return
         self.settings.setValue("memory_rows", self.memory_rows)
         self.settings.setValue("cache_dir", self.cache_dir)
+        self.settings.setValue("restore_session", self.restore_session.isChecked())
         apply_cache_dir(self.cache_dir)
         super().accept()
 

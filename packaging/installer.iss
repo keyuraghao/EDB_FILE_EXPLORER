@@ -55,7 +55,30 @@ Root: HKA; Subkey: "{code:PathRegKey}"; ValueType: expandsz; ValueName: "Path"; 
 [Run]
 Filename: "{app}\EDB-Explorer.exe"; Description: "Launch EDB Explorer"; Flags: nowait postinstall skipifsilent
 
+[UninstallDelete]
+Type: filesandordirs; Name: "{app}\data"
+
 [Code]
+// After the files are gone, offer to remove per-user state (settings in the registry, signing key and
+// trusted signers in %APPDATA%, disk caches in %LOCALAPPDATA% / %TEMP%) so an uninstall can be complete.
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  Answer: Integer;
+begin
+  if CurUninstallStep = usPostUninstall then
+  begin
+    Answer := MsgBox('Also remove your EDB Explorer settings, project signing key, trusted signers and caches?' + #13#10 + #13#10 +
+                     'Choose No to keep them for a later reinstall.', mbConfirmation, MB_YESNO or MB_DEFBUTTON2);
+    if Answer = IDYES then
+    begin
+      RegDeleteKeyIncludingSubkeys(HKCU, 'Software\EDB Explorer');
+      DelTree(ExpandConstant('{userappdata}\EDB Explorer'), True, True, True);
+      DelTree(ExpandConstant('{localappdata}\EDB Explorer'), True, True, True);
+      DelTree(ExpandConstant('{tmp}\..\edb-rows-*'), False, True, True);
+    end;
+  end;
+end;
+
 function PathRegKey(Param: string): string;
 begin
   if IsAdminInstallMode then

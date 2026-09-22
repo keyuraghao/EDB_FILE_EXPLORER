@@ -20,9 +20,16 @@ if ($LASTEXITCODE -ne 0) { throw "Smoke test failed" }
 
 Write-Host ">> Packaging"
 Copy-Item README.md, LICENSE, CHANGELOG.md "dist\$name\"
-$zip = "dist\$name-windows-$arch.zip"
+
+# Portable build: the "portable.txt" marker keeps settings / keys / caches in .\data, Uninstall.cmd removes it all.
+$portable = "dist\$name-portable"
+if (Test-Path $portable) { Remove-Item -Recurse -Force $portable }
+Copy-Item -Recurse "dist\$name" $portable
+Set-Content -Path "$portable\portable.txt" -Value "EDB Explorer portable build $version - user data is kept in the data folder next to this file." -Encoding ascii
+Copy-Item packaging\windows\Uninstall.cmd, packaging\windows\README-portable.txt "$portable\"
+$zip = "dist\EDB-Explorer-$version-windows-$arch-portable.zip"
 if (Test-Path $zip) { Remove-Item $zip }
-Compress-Archive -Path "dist\$name" -DestinationPath $zip
+Compress-Archive -Path $portable -DestinationPath $zip
 (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower() + "  " + (Split-Path $zip -Leaf) | Out-File -Encoding ascii "$zip.sha256"
 Write-Host ">> Done: $zip"
 

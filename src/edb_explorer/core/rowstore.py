@@ -73,6 +73,7 @@ class FilterSpec:
     text: str
     regex: bool = False
     case_sensitive: bool = False
+    column: int | None = None  # restrict to one column position (None = every column)
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,6 +222,7 @@ class DiskRowStore:
         for conn in (self._w, self._r):
             conn.create_function("edb_re", 2, _regexp, deterministic=True)
             conn.create_function("edb_icontains", 2, _icontains, deterministic=True)
+            conn.create_function("edb_cell_text", 2, _cell_text, deterministic=True)
         self.count = 0  # committed rows (what readers can see)
         self.seen: set[int] = set()  # column positions that have ever held a value
         self._seen_sorted: tuple[int, ...] = ()
@@ -371,17 +373,26 @@ class DiskRowStore:
     def _where(self, spec: FilterSpec | None) -> tuple[str, tuple[Any, ...]]:
         if spec is None or not spec.text:
             return "", ()
+        # one column: match its display text (the typed column rendered like the grid shows it); every
+        # column: the stored row text
+        if spec.column is not None:
+            if spec.column not in self.seen:
+                return " WHERE 0", ()
+            subject = f"edb_cell_text(c{spec.column}, ?)"
+            extra: tuple[Any, ...] = (self._types[spec.column] or "",)
+        else:
+            subject, extra = "t", ()
         if spec.regex:
             try:
                 re.compile(spec.text)
             except re.error:
                 return "", ()  # the in-memory proxy also shows everything for a broken pattern
-            return " WHERE edb_re(?, t)", (("" if spec.case_sensitive else "(?i)") + spec.text,)
+            return f" WHERE edb_re(?, {subject})", (("" if spec.case_sensitive else "(?i)") + spec.text, *extra)
         if spec.case_sensitive:
-            return " WHERE instr(t, ?) > 0", (spec.text,)
+            return f" WHERE instr({subject}, ?) > 0", (*extra, spec.text)
         if spec.text.isascii():
-            return " WHERE t LIKE ? ESCAPE '\\'", ("%" + _ESCAPE_LIKE.sub(r"\\\1", spec.text) + "%",)
-        return " WHERE edb_icontains(?, t)", (spec.text.lower(),)
+            return f" WHERE {subject} LIKE ? ESCAPE '\\'", (*extra, "%" + _ESCAPE_LIKE.sub(r"\\\1", spec.text) + "%")
+        return f" WHERE edb_icontains(?, {subject})", (spec.text.lower(), *extra)
 
     def drop_view(self, vid: int | None) -> None:
         if vid is None or vid not in self._views:
@@ -467,6 +478,19 @@ def _regexp(pattern: str, text: str | None) -> int:
 
 def _icontains(needle: str, text: str | None) -> int:
     return 0 if text is None else int(needle in text.lower())
+
+
+def _cell_text(value: Any, ctype: str) -> str | None:
+    """Display text of one typed cell (what the grid shows), for column-scoped filters."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return (
+            value
+            if len(value) <= CELL_TEXT_LENGTH and "\r" not in value and "\n" not in value
+            else display_value(value, ctype or None, CELL_TEXT_LENGTH)
+        )
+    return display_value(value, ctype or None, CELL_TEXT_LENGTH)
 
 
 def _cleanup(w: sqlite3.Connection, r: sqlite3.Connection, directory: str) -> None:

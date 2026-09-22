@@ -52,6 +52,7 @@ class TableTab(QWidget):
         self.user_hidden: set[int] = set()
         self._finished = False
         self._builder: ViewBuilder | None = None
+        self._filter_column: int | None = None  # header menu "Filter in this column only"
         self._old_builders: list[ViewBuilder] = []  # cancelled builds still winding down
         self._sort: SortSpec | None = None
         self._view_stale = False  # rows arrived after the current disk view was built
@@ -74,6 +75,11 @@ class TableTab(QWidget):
         self.filter_edit = QLineEdit()
         self.filter_edit.setPlaceholderText("Filter rows (substring, or regex with .* toggle)  —  Ctrl+F")
         self.filter_edit.setClearButtonEnabled(True)
+        clear_act = QAction(self.filter_edit)
+        clear_act.setShortcut(QKeySequence(Qt.Key.Key_Escape))
+        clear_act.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)
+        clear_act.triggered.connect(lambda: (self.filter_edit.clear(), self.view.setFocus()))
+        self.filter_edit.addAction(clear_act)
         self._debounce = QTimer(self)
         self._debounce.setSingleShot(True)
         self._debounce.setInterval(250)
@@ -94,6 +100,15 @@ class TableTab(QWidget):
         self.case_btn.setToolTip("Case sensitive")
         self.case_btn.toggled.connect(self.apply_filter)
         bar.addWidget(self.case_btn)
+
+        self.column_scope = QToolButton()
+        self.column_scope.setText("all columns")
+        self.column_scope.setToolTip("Which column the filter searches (right-click a header to pick one)")
+        self.column_scope.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.scope_menu = QMenu(self)
+        self.column_scope.setMenu(self.scope_menu)
+        self.scope_menu.aboutToShow.connect(self._populate_scope_menu)
+        bar.addWidget(self.column_scope)
 
         self.hide_empty = QCheckBox("Hide empty columns")
         self.hide_empty.setChecked(True)
@@ -168,6 +183,16 @@ class TableTab(QWidget):
         copy.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         copy.triggered.connect(self.copy_selection)
         self.addAction(copy)
+        goto = QAction(self)
+        goto.setShortcut(QKeySequence("Ctrl+G"))
+        goto.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        goto.triggered.connect(self.goto_row)
+        self.addAction(goto)
+        reload = QAction(self)
+        reload.setShortcut(QKeySequence(Qt.Key.Key_F5))
+        reload.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        reload.triggered.connect(self.reload)
+        self.addAction(reload)
 
         # start with every column hidden; they are revealed as data arrives
         for c in range(self.model.columnCount()):
@@ -313,7 +338,11 @@ class TableTab(QWidget):
             return
         self._cancel_builder()
         text = self.filter_edit.text()
-        spec = FilterSpec(text, self.regex_btn.isChecked(), self.case_btn.isChecked()) if text else None
+        spec = (
+            FilterSpec(text, self.regex_btn.isChecked(), self.case_btn.isChecked(), self._filter_column)
+            if text
+            else None
+        )
         self._view_stale = False
         if spec is None and self._sort is None:
             self.model.set_view(None)
@@ -427,8 +456,44 @@ class TableTab(QWidget):
         if self.model.disk:
             self._request_view()
             return
-        self.proxy.set_filter(self.filter_edit.text(), self.regex_btn.isChecked(), self.case_btn.isChecked())
+        self.proxy.set_filter(
+            self.filter_edit.text(), self.regex_btn.isChecked(), self.case_btn.isChecked(), self._filter_column
+        )
         self._update_status("Loaded" if self._finished else "Loading…")
+
+    def set_filter_column(self, column: int | None) -> None:
+        """Restrict the filter box to one column (``None`` = every visible column)."""
+        self._filter_column = column
+        self.column_scope.setText(self.model.column_names[column] if column is not None else "all columns")
+        self.apply_filter()
+
+    def _populate_scope_menu(self) -> None:
+        self.scope_menu.clear()
+        act = self.scope_menu.addAction("All columns")
+        act.setCheckable(True)
+        act.setChecked(self._filter_column is None)
+        act.triggered.connect(lambda: self.set_filter_column(None))
+        self.scope_menu.addSeparator()
+        for c in self.model.seen_sorted:
+            a = self.scope_menu.addAction(self.model.column_names[c])
+            a.setCheckable(True)
+            a.setChecked(c == self._filter_column)
+            a.triggered.connect(lambda _checked=False, col=c: self.set_filter_column(col))
+
+    def goto_row(self) -> None:
+        """Ctrl+G: jump to a row by its table index (the number in the row header)."""
+        from PySide6.QtWidgets import QInputDialog
+
+        last = self.model.rowCount()
+        if not last:
+            return
+        current = self.view.currentIndex()
+        start = self.model.row_index(self._source_row(current.row())) if current.isValid() else 0
+        value, ok = QInputDialog.getInt(
+            self, "Go to row", "Row index (as shown in the row header):", start, 0, 2**31 - 1
+        )
+        if ok and not self.select_row_index(value):
+            self.status.emit(f"Row {value} is not loaded (or filtered out)")
 
     def focus_filter(self) -> None:
         self.filter_edit.setFocus()
@@ -482,20 +547,48 @@ class TableTab(QWidget):
     # ------------------------------------------------------------------ #
     # Copy / context menus
     # ------------------------------------------------------------------ #
-    def copy_selection(self) -> None:
+    def copy_selection(self, fmt: str = "tsv") -> None:
+        """Copy the selected rows (visible columns) as TSV, JSON or a Markdown table."""
         sel = self.view.selectionModel()
         if not sel or not sel.selectedIndexes():
             return
         rows = sorted({i.row() for i in sel.selectedIndexes()})
         cols = [c for c in range(self.model.columnCount()) if not self.view.isColumnHidden(c)]
-        buf = io.StringIO()
-        writer = csv.writer(buf, delimiter="\t", lineterminator="\n")
-        writer.writerow([self.model.column_names[c] for c in cols])
+        names = [self.model.column_names[c] for c in cols]
         grid = self.view.model()
-        for r in rows:
-            writer.writerow([grid.index(r, c).data(Qt.ItemDataRole.DisplayRole) or "" for c in cols])
-        QApplication.clipboard().setText(buf.getvalue())
-        self.status.emit(f"Copied {len(rows)} row(s) to clipboard")
+        cells = [[grid.index(r, c).data(Qt.ItemDataRole.DisplayRole) or "" for c in cols] for r in rows]
+        if fmt == "json":
+            import json
+
+            records = []
+            for r in rows:
+                raw = self.model.raw_row(self._source_row(r))
+                records.append(
+                    {
+                        "_row": self.model.row_index(self._source_row(r)),
+                        **{n: display_value(raw.get(n), self.model.column_types.get(n), 10_000_000) for n in names},
+                    }
+                )
+            text = json.dumps(records, indent=2, ensure_ascii=False)
+        elif fmt == "markdown":
+            widths = [max(len(n), *(len(row[i]) for row in cells)) for i, n in enumerate(names)]
+
+            def line(vals: list[str]) -> str:
+                return (
+                    "| " + " | ".join(v.replace("|", "\\|").ljust(w) for v, w in zip(vals, widths, strict=True)) + " |"
+                )
+
+            text = "\n".join(
+                [line(names), "|" + "|".join("-" * (w + 2) for w in widths) + "|", *(line(row) for row in cells)]
+            )
+        else:
+            buf = io.StringIO()
+            writer = csv.writer(buf, delimiter="\t", lineterminator="\n")
+            writer.writerow(names)
+            writer.writerows(cells)
+            text = buf.getvalue()
+        QApplication.clipboard().setText(text)
+        self.status.emit(f"Copied {len(rows)} row(s) as {fmt.upper() if fmt != 'markdown' else 'Markdown'}")
 
     def _context_menu(self, pos: QPoint) -> None:
         idx = self.view.indexAt(pos)
@@ -511,6 +604,8 @@ class TableTab(QWidget):
                 ),
             )
             menu.addAction("Copy row(s) as TSV", self.copy_selection)
+            menu.addAction("Copy row(s) as JSON", lambda: self.copy_selection("json"))
+            menu.addAction("Copy row(s) as Markdown table", lambda: self.copy_selection("markdown"))
             menu.addAction(f"Copy column name  ({col})", lambda: QApplication.clipboard().setText(col))
             menu.addSeparator()
             menu.addAction(
@@ -534,6 +629,12 @@ class TableTab(QWidget):
         menu = QMenu(self)
         if c >= 0:
             name = self.model.column_names[c]
+            menu.addAction(f"Filter in this column only  ({name})", lambda: self.set_filter_column(c))
+            if self._filter_column is not None:
+                menu.addAction("Filter in all columns", lambda: self.set_filter_column(None))
+            menu.addAction("Sort ascending", lambda: self.view.sortByColumn(c, Qt.SortOrder.AscendingOrder))
+            menu.addAction("Sort descending", lambda: self.view.sortByColumn(c, Qt.SortOrder.DescendingOrder))
+            menu.addSeparator()
             menu.addAction(f"Hide column  ({name})", lambda: self._toggle_column(c, False))
             menu.addAction("Resize to contents", lambda: self.view.resizeColumnToContents(c))
             menu.addAction("Copy column name", lambda: QApplication.clipboard().setText(name))

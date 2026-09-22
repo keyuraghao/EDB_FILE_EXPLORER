@@ -7,7 +7,7 @@ import io
 from datetime import datetime, timezone
 from typing import Any
 
-from PySide6.QtCore import QDate, Qt, Signal
+from PySide6.QtCore import QDate, QSettings, Qt, Signal
 from PySide6.QtGui import QAction, QFont, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -227,6 +227,14 @@ class QueryTab(QWidget):
         self.extract_btn.setIcon(icon("extract"))
         self.extract_btn.clicked.connect(lambda: self.extract_requested.emit(self.grid))
         bar.addWidget(self.extract_btn)
+        self.history_btn = QToolButton()
+        self.history_btn.setText("History ▾")
+        self.history_btn.setToolTip("Queries you ran before (kept across sessions)")
+        self.history_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.history_menu = QMenu(self)
+        self.history_btn.setMenu(self.history_menu)
+        self.history_menu.aboutToShow.connect(self._fill_history_menu)
+        bar.addWidget(self.history_btn)
         bar.addStretch(1)
         layout.addLayout(bar)
 
@@ -319,10 +327,41 @@ class QueryTab(QWidget):
         if self._worker:
             self._worker.cancel()
 
+    # ---- history -------------------------------------------------------- #
+    HISTORY_SIZE = 30
+
+    def _history(self) -> list[str]:
+        val = QSettings().value("sql_history", [])
+        items = val if isinstance(val, list) else [val] if val else []
+        return [str(x) for x in items]
+
+    def _remember(self, sql: str) -> None:
+        sql = sql.strip()
+        if not sql:
+            return
+        items = [q for q in self._history() if q != sql]
+        items.insert(0, sql)
+        QSettings().setValue("sql_history", items[: self.HISTORY_SIZE])
+
+    def _fill_history_menu(self) -> None:
+        self.history_menu.clear()
+        items = self._history()
+        if not items:
+            self.history_menu.addAction("(no queries yet)").setEnabled(False)
+            return
+        for q in items:
+            label = " ".join(q.split())
+            act = self.history_menu.addAction(label if len(label) <= 90 else label[:88] + "…")
+            act.setToolTip(q)
+            act.triggered.connect(lambda _c=False, sql=q: self.editor.setPlainText(sql))
+        self.history_menu.addSeparator()
+        self.history_menu.addAction("Clear history", lambda: QSettings().setValue("sql_history", []))
+
     def _done(self, result: QueryResult) -> None:
         self.run_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.progress.hide()
+        self._remember(result.sql if self.title == "SQL" else "")
         rows = [dict(zip(result.columns, r, strict=False)) for r in result.rows]
         self.grid.set_result(result.columns, rows)
         note = " (truncated - raise the limit to see more)" if result.truncated else ""

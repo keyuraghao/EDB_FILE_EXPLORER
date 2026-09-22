@@ -214,3 +214,17 @@ def test_scalar_subclasses_round_trip_as_builtins(tmp_path: Any) -> None:
         assert not st._unpicklable_logged
     finally:
         st.close()
+
+
+def test_column_scoped_filter(store: DiskRowStore) -> None:
+    store.append(list(range(len(ROWS))), ROWS)
+    # "1" appears in many columns, but only rows 0 (n=1) match when the filter is restricted to column n
+    assert store.view_count(store.build_view(FilterSpec("1"), None)) >= 3
+    only_n = store.build_view(FilterSpec("1", column=0), None)
+    assert [p for p, _i, _r in store.fetch(only_n, 0, 10)] == [0, 1, 4]  # 1, -1099511627776, 2**70 all contain "1"
+    assert store.view_count(store.build_view(FilterSpec("^1$", regex=True, column=0), None)) == 1
+    assert store.view_count(store.build_view(FilterSpec("ZULU", column=5), None)) == 1  # case-insensitive
+    assert store.view_count(store.build_view(FilterSpec("ZULU", case_sensitive=True, column=5), None)) == 0
+    # DateTime column is matched on its decoded display text, like the grid shows it
+    assert store.view_count(store.build_view(FilterSpec("2021-01-01", column=3), None)) == 1
+    assert store.view_count(store.build_view(FilterSpec("x", column=9), None)) == 0  # never-populated column

@@ -92,12 +92,21 @@ class SearchDialog(QDialog):
         self.results.horizontalHeader().setStretchLastSection(True)
         self.results.verticalHeader().setVisible(False)
         self.results.itemDoubleClicked.connect(self._activate)
+        self.results.itemActivated.connect(self._activate)  # Enter on a selected hit
         layout.addWidget(self.results, 1)
 
         foot = QHBoxLayout()
-        self.status = QLabel("Double-click a hit to jump to the record.")
+        self.status = QLabel("Double-click a hit (or select it and press Enter) to jump to the record.")
         self.status.setObjectName("dim")
         foot.addWidget(self.status, 1)
+        self.copy_btn = QPushButton("Copy hits")
+        self.copy_btn.setToolTip("Copy every hit as tab-separated text")
+        self.copy_btn.clicked.connect(self._copy_hits)
+        foot.addWidget(self.copy_btn)
+        self.extract_btn = QPushButton("Extract hits…")
+        self.extract_btn.setToolTip("Save the hits as CSV / XLSX / JSON …")
+        self.extract_btn.clicked.connect(self._extract_hits)
+        foot.addWidget(self.extract_btn)
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)
         self.progress.setMaximumWidth(160)
@@ -105,6 +114,46 @@ class SearchDialog(QDialog):
         foot.addWidget(self.progress)
         layout.addLayout(foot)
         self.refresh_scope()
+        settings = QSettings()
+        self.query.setText(str(settings.value("search_last", "")))
+        self.regex.setChecked(settings.value("search_regex", False, type=bool))
+        self.case.setChecked(settings.value("search_case", False, type=bool))
+        self.query.selectAll()
+
+    def _hits(self) -> list[dict[str, Any]]:
+        out = []
+        for r in range(self.results.rowCount()):
+            out.append(
+                {
+                    h: self.results.item(r, c).text()
+                    for c, h in enumerate(("database", "table", "row", "column", "value"))
+                }
+            )
+        return out
+
+    def _copy_hits(self) -> None:
+        import csv
+        import io
+
+        from PySide6.QtWidgets import QApplication
+
+        buf = io.StringIO()
+        w = csv.writer(buf, delimiter="\t", lineterminator="\n")
+        w.writerow(["database", "table", "row", "column", "value"])
+        for h in self._hits():
+            w.writerow(h.values())
+        QApplication.clipboard().setText(buf.getvalue())
+        self.status.setText(f"Copied {self.results.rowCount()} hit(s) to the clipboard")
+
+    def _extract_hits(self) -> None:
+        hits = self._hits()
+        if not hits:
+            self.status.setText("Nothing to extract - run a search first.")
+            return
+        db = next(iter(self.session), None)
+        if db is None:
+            return
+        ExportDialog(db, None, hits, [], ["database", "table", "row", "column", "value"], self, "results").exec()
 
     def refresh_scope(self) -> None:
         current = self.scope.currentData()
@@ -150,6 +199,10 @@ class SearchDialog(QDialog):
         self.stop_btn.setEnabled(True)
         self.progress.show()
         self.status.setText("Searching…")
+        settings = QSettings()
+        settings.setValue("search_last", text)
+        settings.setValue("search_regex", regex)
+        settings.setValue("search_case", case)
         self._worker.start()
 
     def stop(self) -> None:

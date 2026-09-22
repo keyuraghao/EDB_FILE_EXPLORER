@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QPlainTextEdit,
     QPushButton,
     QSplitter,
@@ -97,6 +98,14 @@ class RecordInspector(QWidget):
         rl.setContentsMargins(0, 0, 0, 0)
         rl.addWidget(self.tabs, 1)
         btns = QHBoxLayout()
+        copy_record = QPushButton("Copy record ▾")
+        copy_record.setToolTip("Copy every value of this record")
+        record_menu = QMenu(copy_record)
+        record_menu.addAction("as JSON", lambda: self._copy_record("json"))
+        record_menu.addAction("as name = value lines", lambda: self._copy_record("text"))
+        record_menu.addAction("as Markdown table", lambda: self._copy_record("markdown"))
+        copy_record.setMenu(record_menu)
+        btns.addWidget(copy_record)
         btns.addStretch(1)
         copy_val = QPushButton("Copy value")
         copy_val.clicked.connect(lambda: QApplication.clipboard().setText(self.value_edit.toPlainText()))
@@ -196,6 +205,27 @@ class RecordInspector(QWidget):
             if path:
                 with open(path, "w", encoding="utf-8") as fh:
                     fh.write(self.value_edit.toPlainText())
+
+    def _copy_record(self, fmt: str) -> None:
+        """Copy the whole record (non-empty columns, or all when 'Show empty columns' is on)."""
+        import json
+
+        show_nulls = self.show_nulls.isChecked()
+        names = [n for n in self._columns if show_nulls or self._row.get(n) is not None]
+        values = {n: _full_text(self._row.get(n), self._columns[n].type) for n in names}
+        if fmt == "json":
+            text = json.dumps(values, indent=2, ensure_ascii=False)
+        elif fmt == "markdown":
+            width = max((len(n) for n in names), default=6)
+            lines = [f"| {'Column'.ljust(width)} | Value |", f"|{'-' * (width + 2)}|-------|"]
+            lines += [
+                f"| {n.ljust(width)} | {v.replace(chr(10), ' ').replace('|', chr(92) + '|')} |"
+                for n, v in values.items()
+            ]
+            text = "\n".join(lines)
+        else:
+            text = "\n".join(f"{n} = {v}" for n, v in values.items())
+        QApplication.clipboard().setText(text)
 
     def _copy_hex(self) -> None:
         if self._current_bytes is not None:

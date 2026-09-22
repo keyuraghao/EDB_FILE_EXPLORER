@@ -1028,6 +1028,9 @@ def project_trust(
 
 
 def main() -> None:
+    from edb_explorer import portable
+
+    portable.activate()
     app()
 
 

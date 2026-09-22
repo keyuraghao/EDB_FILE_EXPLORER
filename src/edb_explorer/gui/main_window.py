@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QByteArray, QSettings, Qt, QTimer, QUrl
+from PySide6.QtCore import QByteArray, QEvent, QSettings, Qt, QTimer, QUrl
 from PySide6.QtGui import (
     QAction,
     QActionGroup,
@@ -34,7 +35,7 @@ from edb_explorer.core import EdbDatabase, Session
 from edb_explorer.core.backends import KINDS
 from edb_explorer.core.session import ESE_EXTENSIONS
 from edb_explorer.core.sqlworkspace import SqlWorkspace
-from edb_explorer.gui.icons import app_icon, icon
+from edb_explorer.gui.icons import app_icon, icon, kind_icon
 from edb_explorer.gui.shortcuts import ShortcutRegistry
 from edb_explorer.gui.tasks import TaskManager, TaskPanel
 from edb_explorer.gui.theme import THEMES, apply_theme, current_theme, theme_preference
@@ -75,6 +76,7 @@ FILE_FILTER = (
     "SQL dumps (*.sql);;BSON dumps (*.bson);;Windows Event Log (*.evtx);;All files (*)"
 )
 MAX_RECENT = 12
+_GUARDED_TASKS = frozenset({"Exporting", "Importing", "Extracting", "Generating", "Writing"})
 
 
 class MainWindow(QMainWindow):
@@ -103,7 +105,18 @@ class MainWindow(QMainWindow):
         self._build_menus()
         self._restore_state()
         self._update_recent_menu()
-        self.statusBar().showMessage("Open a database with File ▸ Open, or drop files here.")
+        self.tabs.currentChanged.connect(self._update_title)
+        self._update_title()
+        from edb_explorer import portable
+
+        pdata = portable.data_dir()
+        self.statusBar().showMessage(
+            f"Portable mode - settings, keys and caches live in {pdata}"
+            if pdata
+            else "Open a database with File ▸ Open, or drop files here."
+        )
+        if self.settings.value("restore_session", True, type=bool) and self.last_session():
+            QTimer.singleShot(0, self._maybe_reopen_last_session)
 
     # ------------------------------------------------------------------ #
     # UI construction
@@ -117,11 +130,14 @@ class MainWindow(QMainWindow):
         self.tabs.currentChanged.connect(self._tab_changed)
         self.tabs.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tabs.customContextMenuRequested.connect(self._tabs_menu)
+        self.tabs.tabBar().installEventFilter(self)  # middle-click closes a tab
         placeholder = WelcomePage()
         placeholder.open_files.connect(self.open_files_dialog)
         placeholder.scan_folder.connect(self.open_folder_dialog)
         placeholder.open_recent.connect(lambda p: self.open_files([p]))
         placeholder.clear_recent.connect(lambda: (self.settings.setValue("recent", []), self._update_recent_menu()))
+        placeholder.import_project.connect(lambda: self.import_project_dialog())
+        placeholder.reopen_session.connect(self.reopen_last_session)
         self._placeholder = placeholder
         self.setCentralWidget(self.tabs)
         self.tabs.addTab(placeholder, "Welcome")
@@ -139,6 +155,7 @@ class MainWindow(QMainWindow):
         self.tree.mailboxes_activated.connect(self.show_mailboxes)
         self.tree.stats_requested.connect(lambda db_id, t: self._show_stats_for(db_id, t))
         self.tree.sql_requested.connect(lambda db_id: self.show_sql(db_id))
+        self.tree.reveal_requested.connect(lambda p: self._reveal(Path(p)))
         self.dock_tree = QDockWidget("Databases", self)
         self.dock_tree.setObjectName("dock_databases")
         self.dock_tree.setWidget(self.tree)
@@ -179,6 +196,7 @@ class MainWindow(QMainWindow):
         a_scan = self._act(file_menu, "Open &folder (scan)…", self.open_folder_dialog, "Ctrl+Shift+O", "scan")
         self.recent_menu = file_menu.addMenu("Open &recent")
         self.recent_menu.setIcon(icon("history"))
+        self._act(file_menu, "Reopen &last session", self.reopen_last_session, "Ctrl+Shift+T", "history")
         file_menu.addSeparator()
         self._act(file_menu, "&Import project…", self.import_project_dialog, "Ctrl+Shift+I", "project")
         self._act(file_menu, "Export &project…", self.export_project_dialog, "Ctrl+Shift+P", "project")
@@ -241,7 +259,6 @@ class MainWindow(QMainWindow):
         self._act(tools, "Filter &rows in current table", self._focus_filter, QKeySequence.StandardKey.Find, "filter")
         self._act(tools, "&Timestamp decoder…", lambda: self.show_timestamp(None), "Ctrl+T", "clock")
         self._act(tools, "&Count records in all tables", lambda: self._count_all(self._current_db_id()))
-        tools.addSeparator()
 
         settings_menu = mb.addMenu("&Settings")
         self._act(settings_menu, "&Preferences…  (rows kept in memory, disk cache)", self.show_settings, "Ctrl+,")
@@ -250,6 +267,7 @@ class MainWindow(QMainWindow):
         help_menu = mb.addMenu("&Help")
         self._act(help_menu, "&Keyboard shortcuts", self.show_shortcuts, None, "keyboard", rebindable=False)
         self._act(help_menu, "&MCP server setup…", self._show_mcp_help)
+        self._act(help_menu, "Check for &updates…", self.check_for_updates)
         self._act(
             help_menu,
             "Project on &GitHub",
@@ -323,7 +341,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ #
     def open_files_dialog(self) -> None:
         start = self.settings.value("last_dir", str(Path.home()))
-        files, _ = QFileDialog.getOpenFileNames(self, "Open ESE database(s)", start, FILE_FILTER)
+        files, _ = QFileDialog.getOpenFileNames(self, "Open database(s)", start, FILE_FILTER)
         if files:
             self.settings.setValue("last_dir", str(Path(files[0]).parent))
             self.open_files(files)
@@ -577,7 +595,7 @@ class MainWindow(QMainWindow):
         tab.extract_requested.connect(lambda scope, t=tab: self._export(t.db.id, t.table.name, t, scope))
         tab.loader.finished_ok.connect(lambda _n, d=db: self.tree.refresh_counts(d))  # type: ignore[union-attr]
         label = info.display_name if len(info.display_name) <= 32 else info.display_name[:30] + "…"
-        idx = self.tabs.addTab(tab, label)
+        idx = self.tabs.addTab(tab, kind_icon(db.kind), label)
         self.tabs.setTabToolTip(
             idx, f"{db.path.name}\n{info.name}" + (f"\n\n{info.description}" if info.description else "")
         )
@@ -626,10 +644,49 @@ class MainWindow(QMainWindow):
         index = self.tabs.tabBar().tabAt(pos)
         menu = QMenu(self)
         if index >= 0 and self.tabs.widget(index) is not self._placeholder:
+            w = self.tabs.widget(index)
             menu.addAction("Close tab", lambda: self._close_tab(index))
             menu.addAction("Close other tabs", lambda: self._close_other_tabs(index))
+            menu.addAction("Close tabs to the right", lambda: self._close_tabs_right(index))
+            if isinstance(w, TableTab):
+                menu.addSeparator()
+                menu.addAction("Reload table", w.reload)
+                menu.addAction("Column statistics…", lambda: self._show_stats_for(w.db.id, w.table.name))
+                menu.addAction("Show file in folder", lambda: self._reveal(w.db.path))
         menu.addAction("Close all tabs", lambda: self._close_other_tabs(-1))
         menu.exec(self.tabs.mapToGlobal(pos))
+
+    def _close_tabs_right(self, index: int) -> None:
+        for i in reversed(range(index + 1, self.tabs.count())):
+            self._close_tab(i)
+
+    def eventFilter(self, obj: Any, event: Any) -> bool:
+        if (
+            obj is self.tabs.tabBar()
+            and event.type() == QEvent.Type.MouseButtonRelease
+            and event.button() == Qt.MouseButton.MiddleButton
+        ):
+            index = self.tabs.tabBar().tabAt(event.position().toPoint())
+            if index >= 0:
+                self._close_tab(index)
+                return True
+        return super().eventFilter(obj, event)
+
+    def _update_title(self, *_args: Any) -> None:
+        w = self.tabs.currentWidget()
+        if isinstance(w, TableTab):
+            context = f"{w.table.display_name} · {w.db.path.name}"
+        elif isinstance(w, MailboxTab):
+            context = f"Mailboxes · {w.db.path.name}"
+        elif w is not None and w is not self._placeholder:
+            context = self.tabs.tabText(self.tabs.currentIndex()).lstrip("▶ ")
+        else:
+            context = ""
+        self.setWindowTitle(f"{context} - {__app_name__}" if context else __app_name__)
+
+    def _reveal(self, path: Path) -> None:
+        """Open the file manager on the folder that holds ``path``."""
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent if path.is_file() else path)))
 
     def _close_other_tabs(self, keep: int) -> None:
         keep_widget = self.tabs.widget(keep) if keep >= 0 else None
@@ -937,6 +994,16 @@ class MainWindow(QMainWindow):
         self.resizeDocks([self.dock_tree, self.dock_info], [320, 340], Qt.Orientation.Horizontal)
         self.resizeDocks([self.dock_inspector], [260], Qt.Orientation.Vertical)
 
+    def _confirm_quit_with_tasks(self, n: int) -> bool:
+        answer = QMessageBox.question(
+            self,
+            "Quit",
+            f"{n} export / import task(s) are still running and will be cancelled.\n\nQuit anyway?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
     def _show_mcp_help(self) -> None:
         import shutil
         import sys
@@ -968,16 +1035,100 @@ class MainWindow(QMainWindow):
         self.recent_menu.clear()
         recent = self._recent()
         self._placeholder.set_recent(recent)
-        for p in recent:
-            act = self.recent_menu.addAction(p)
+        last = self.last_session()
+        self._placeholder.set_last_session(
+            ", ".join(Path(d["path"]).name for d in last["databases"][:4])
+            + ("…" if last and len(last["databases"]) > 4 else "")
+            if last
+            else None
+        )
+        for n, p in enumerate(recent, start=1):
+            path = Path(p)
+            exists = path.exists()
+            act = self.recent_menu.addAction(f"&{n}  {path.name}" + ("" if exists else "   (missing)"))
+            act.setToolTip(p)
+            act.setStatusTip(p)
+            act.setEnabled(exists)
             act.triggered.connect(lambda _c=False, path=p: self.open_files([path]))
         if recent:
             self.recent_menu.addSeparator()
+            if any(not Path(p).exists() for p in recent):
+                self.recent_menu.addAction("Remove missing files", self._prune_recent)
             self.recent_menu.addAction(
                 "Clear list", lambda: (self.settings.setValue("recent", []), self._update_recent_menu())
             )
         else:
             self.recent_menu.addAction("(empty)").setEnabled(False)
+
+    def _prune_recent(self) -> None:
+        self.settings.setValue("recent", [p for p in self._recent() if Path(p).exists()])
+        self._update_recent_menu()
+
+    # ------------------------------------------------------------------ #
+    # Last session
+    # ------------------------------------------------------------------ #
+    def last_session(self) -> dict[str, Any] | None:
+        raw = self.settings.value("last_session")
+        if not raw:
+            return None
+        try:
+            data = json.loads(str(raw))
+        except ValueError:
+            return None
+        dbs = [d for d in data.get("databases", []) if Path(d.get("path", "")).exists()]
+        return {"databases": dbs, "workspace": data.get("workspace") or {}} if dbs else None
+
+    def _save_session(self) -> None:
+        if not len(self.session):
+            self.settings.remove("last_session")
+            return
+        data = {
+            "databases": [{"id": db.id, "path": str(db.path)} for db in self.session],
+            "workspace": self.capture_workspace(),
+        }
+        self.settings.setValue("last_session", json.dumps(data))
+
+    def _maybe_reopen_last_session(self) -> None:
+        if len(self.session):  # files were passed on the command line / dropped already
+            return
+        self.reopen_last_session()
+
+    def reopen_last_session(self) -> None:
+        last = self.last_session()
+        if not last:
+            self.statusBar().showMessage("No previous session to reopen", 5000)
+            return
+        self.statusBar().showMessage(f"Reopening last session: {len(last['databases'])} database(s)…", 8000)
+        self.open_project([(d["id"], d["path"]) for d in last["databases"]], last["workspace"])
+
+    # ------------------------------------------------------------------ #
+    # Updates
+    # ------------------------------------------------------------------ #
+    def check_for_updates(self) -> None:
+        from edb_explorer.core.updates import check_latest_release
+
+        self.statusBar().showMessage("Checking GitHub for a newer release…")
+        worker = FunctionWorker(lambda progress, should_stop: check_latest_release(__version__), parent=self)
+
+        def show(result: Any) -> None:
+            latest, url, newer = result
+            if newer:
+                answer = QMessageBox.question(
+                    self,
+                    "Update available",
+                    f"EDB Explorer {latest} is available (you have {__version__}).\n\nOpen the release page?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                )
+                if answer == QMessageBox.StandardButton.Yes:
+                    QDesktopServices.openUrl(QUrl(url))
+            else:
+                QMessageBox.information(self, "Up to date", f"EDB Explorer {__version__} is the latest release.")
+            self.statusBar().clearMessage()
+
+        worker.result.connect(show)
+        worker.failed.connect(lambda m: QMessageBox.warning(self, "Check for updates", f"Could not check: {m}"))
+        self._workers.append(worker)
+        worker.start()
 
     def _restore_state(self) -> None:
         geo = self.settings.value("geometry")
@@ -1011,6 +1162,13 @@ class MainWindow(QMainWindow):
             self.open_files(paths)
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        # only tasks whose result the user is waiting for (project export / import) are worth a prompt;
+        # table loads, searches and queries are simply cancelled
+        important = [t for t in self.tasks.running() if t.title.split(" ")[0] in _GUARDED_TASKS]
+        if important and not self._confirm_quit_with_tasks(len(important)):
+            event.ignore()
+            return
+        self._save_session()
         self.settings.setValue("geometry", self.saveGeometry())
         self.settings.setValue("window_state", self.saveState())
         for i in range(self.tabs.count()):
