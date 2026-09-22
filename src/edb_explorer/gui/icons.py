@@ -166,6 +166,18 @@ def _g_folder(p: QPainter) -> None:
     _folder(p, "#b8bec7", "#6e7781")
 
 
+def _g_project(p: QPainter) -> None:
+    # a sealed box: package outline with a lid line and a wax-seal dot
+    p.setPen(_pen("#4a6fa5", 1.7))
+    p.setBrush(QColor("#c9d8ee"))
+    p.drawPath(_poly((4, 8), (12, 4), (20, 8), (20, 19), (12, 22), (4, 19)))
+    p.drawLine(QPointF(4, 8), QPointF(20, 8))
+    p.drawLine(QPointF(12, 8), QPointF(12, 22))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor("#c53030"))
+    p.drawEllipse(QPointF(16, 14), 2.4, 2.4)
+
+
 def _g_scan(p: QPainter) -> None:
     _folder(p, "#f0b64a", "#b07a12")
     _magnifier(p, "#2f6fd6", 14.5, 14, 3.6, halo=True)
@@ -377,6 +389,7 @@ _GLYPHS: dict[str, Callable[[QPainter], None]] = {
     "open": _g_open,
     "scan": _g_scan,
     "folder": _g_folder,
+    "project": _g_project,
     "search": _g_search,
     "sql": _g_sql,
     "timeline": _g_timeline,

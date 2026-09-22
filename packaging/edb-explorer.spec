@@ -44,6 +44,7 @@ hiddenimports = (
     + collect_submodules("openpyxl")
     + collect_submodules("reportlab")
     + collect_submodules("docx")
+    + collect_submodules("cryptography")
     + ["typer", "rich", "anyio", "pydantic", "starlette", "uvicorn"]
 )
 # The evtx parser is a compiled Rust extension (evtx/_native*.so|pyd); bundle its shared library explicitly.

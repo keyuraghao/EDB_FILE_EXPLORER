@@ -132,6 +132,20 @@ Everything is **strictly read-only** - the tool never writes to an evidence file
 **Reports** (`Ctrl+R`) - file metadata, SHA-256, format state, table inventory with counts, schema and sample rows,
 case ID / analyst / notes → **HTML, PDF, DOCX, Markdown, XLSX, TXT, JSON**.
 
+**Project files** (`File ▸ Export project…` / `Import project…`, `Ctrl+Shift+P` / `Ctrl+Shift+I`, or drop a
+`.edbproj` on the window) - share exactly what you have open with a colleague on another computer:
+- The project records every open database (path, size, **SHA-256**), the open tabs with their filters and hidden
+  columns, the SQL console text, the dock layout and your notes; optionally it **embeds the evidence files** so
+  it is self-contained (files of any size stream in 4 MiB chunks).
+- **Integrity**: every member of the file is listed in a SHA-256 *hash map* that is verified before anything is
+  used; on import each evidence file is checked against its recorded hash, whether it was embedded or found on
+  the other machine (original path → same relative path under a folder you point at → same name + hash).
+- **Signing**: an Ed25519 key pair is created for you on first use; the hash map is signed, and the importer shows
+  the signer and their key fingerprint, keeps a trust store of fingerprints you have accepted, and flags anything
+  altered after signing.
+- **Confidentiality**: a password encrypts the manifest and the embedded files with AES-256-GCM (scrypt-derived
+  key); the signature stays verifiable without the password. Format details in [docs/projects.md](docs/projects.md).
+
 ## Supported databases
 
 | Format | Examples | Notes |
@@ -227,6 +241,10 @@ edb-explorer timestamp 132565120200137766              # FILETIME? OLE? Unix? Co
 edb-explorer mailboxes "Mailbox Database.edb"          # Exchange: mailboxes
 edb-explorer mail "Mailbox Database.edb" -m 129 --folder Inbox --export out/ -f eml
 edb-explorer agents --configure claude --allow /cases/001   # register the MCP server with Claude Code
+edb-explorer project export case.edbproj ntds.dit Security.evtx --embed --ask-password   # signed, encrypted, self-contained
+edb-explorer project info case.edbproj                 # verify hash map + signature, list contents
+edb-explorer project import case.edbproj --dest ~/cases --ask-password --gui   # unpack, verify, open
+edb-explorer project trust                             # your signing fingerprint + trusted signers
 ```
 
 Every command has `--json` output where it makes sense and `--help`.

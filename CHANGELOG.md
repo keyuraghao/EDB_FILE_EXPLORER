@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-22
+
+### Added
+- **Project files (`.edbproj`)** - *File ▸ Export project…* / *Import project…* (`Ctrl+Shift+P` / `Ctrl+Shift+I`,
+  drag-and-drop) and `edb-explorer project export|info|import|trust`. A project records the open databases with
+  their SHA-256, the open tabs (filters, hidden columns, SQL text), the dock layout and notes, and can embed the
+  evidence files so it is self-contained. Every member is pinned by a SHA-256 **hash map** that is verified before
+  use and evidence files are re-hashed on import (embedded or located by path / relative path / name + hash);
+  the hash map is **signed with Ed25519** (key created on first use, signer fingerprint shown, trust store of
+  accepted signers); a password **encrypts** the manifest and embedded files with AES-256-GCM (scrypt), in 4 MiB
+  authenticated chunks so files of any size stream. Format documented in `docs/projects.md`; `cryptography` is
+  now a dependency.
+
 ## [0.6.1] - 2026-09-22
 
 ### Changed

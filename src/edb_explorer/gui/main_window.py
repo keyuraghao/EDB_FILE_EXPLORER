@@ -51,6 +51,7 @@ from edb_explorer.gui.widgets.dialogs import (
 from edb_explorer.gui.widgets.info_panel import InfoPanel
 from edb_explorer.gui.widgets.inspector import RecordInspector
 from edb_explorer.gui.widgets.mailbox_tab import MailboxTab
+from edb_explorer.gui.widgets.project_dialogs import PROJECT_FILTER, ExportProjectDialog, ImportProjectDialog
 from edb_explorer.gui.widgets.query_tab import QueryTab, ResultsGrid, TimelineTab
 from edb_explorer.gui.widgets.settings_dialog import (
     SettingsDialog,
@@ -178,6 +179,9 @@ class MainWindow(QMainWindow):
         a_scan = self._act(file_menu, "Open &folder (scan)…", self.open_folder_dialog, "Ctrl+Shift+O", "scan")
         self.recent_menu = file_menu.addMenu("Open &recent")
         self.recent_menu.setIcon(icon("history"))
+        file_menu.addSeparator()
+        self._act(file_menu, "&Import project…", self.import_project_dialog, "Ctrl+Shift+I", "project")
+        self._act(file_menu, "Export &project…", self.export_project_dialog, "Ctrl+Shift+P", "project")
         file_menu.addSeparator()
         a_extract = self._act(file_menu, "&Extract / export…", self.export_current, "Ctrl+E", "extract")
         self._act(file_menu, "Extract &selected rows…", self.extract_selection, "Ctrl+Shift+E", "rows")
@@ -338,7 +342,8 @@ class MainWindow(QMainWindow):
         for path in paths:
             self._open_one(path)
 
-    def _open_one(self, path: str) -> None:
+    def _open_one(self, path: str, db_id: str | None = None, done: Any = None) -> None:
+        """Open one file in the background; ``db_id`` pins the session id (project import), ``done`` runs after."""
         name = Path(path).name
         task = self.tasks.start(f"Opening {name}", detail=path)
 
@@ -346,6 +351,11 @@ class MainWindow(QMainWindow):
             progress("detecting format")
             kind = self.session.detect(path)
             progress(f"parsing {kind or 'file'} catalog")
+            if db_id:
+                try:
+                    return [self.session.open(path, db_id=db_id)], {}
+                except Exception as exc:
+                    return [], {path: f"{exc.__class__.__name__}: {exc}"}
             return self.session.open_many([path])
 
         worker = FunctionWorker(job, parent=self)
@@ -359,11 +369,126 @@ class MainWindow(QMainWindow):
                     else next(iter(r[1].values()), "failed"),
                     failed=not r[0],
                 ),
+                done() if done else None,
             )
         )
-        worker.failed.connect(lambda m: (self._opened(([], {path: m})), task.finish(m, failed=True)))
+        worker.failed.connect(
+            lambda m: (self._opened(([], {path: m})), task.finish(m, failed=True), done() if done else None)
+        )
         self._workers.append(worker)
         worker.start()
+
+    # ------------------------------------------------------------------ #
+    # Project files
+    # ------------------------------------------------------------------ #
+    def capture_workspace(self) -> dict[str, Any]:
+        """Open tabs, current tab and dock layout - what a project restores on the other machine."""
+        tabs: list[dict[str, Any]] = []
+        for i in range(self.tabs.count()):
+            w = self.tabs.widget(i)
+            if isinstance(w, TableTab):
+                tabs.append(
+                    {
+                        "kind": "table",
+                        "db": w.db.id,
+                        "table": w.table.name,
+                        "filter": w.filter_edit.text(),
+                        "regex": w.regex_btn.isChecked(),
+                        "case": w.case_btn.isChecked(),
+                        "hidden": sorted(w.model.column_names[c] for c in w.user_hidden),
+                    }
+                )
+            elif isinstance(w, QueryTab):
+                tabs.append({"kind": "sql", "text": w.editor.toPlainText()})
+            elif isinstance(w, TimelineTab):
+                tabs.append({"kind": "timeline"})
+            elif isinstance(w, MailboxTab):
+                tabs.append({"kind": "mailbox", "db": w.db.id})
+        return {
+            "tabs": tabs,
+            "current": self.tabs.currentIndex(),
+            "layout": bytes(self.saveState().toBase64()).decode("ascii"),
+            "theme": theme_preference(QApplication.instance()),  # type: ignore[arg-type]
+        }
+
+    def export_project_dialog(self) -> None:
+        dbs = self.session.databases()
+        if not dbs:
+            QMessageBox.information(self, "Export project", "Open the databases you want to share first.")
+            return
+        dlg = ExportProjectDialog(dbs, self.capture_workspace(), self.tasks, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted and dlg.result_path:
+            self.statusBar().showMessage(f"Project written to {dlg.result_path}", 10000)
+
+    def import_project_dialog(self, path: str | None = None) -> None:
+        if not path:
+            path, _ = QFileDialog.getOpenFileName(self, "Import project", str(Path.home()), PROJECT_FILTER)
+        if not path:
+            return
+        dlg = ImportProjectDialog(path, self.tasks, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted or dlg.result is None:
+            return
+        self.open_project(dlg.located(), dlg.result.project.workspace)
+
+    def open_project(self, located: list[tuple[str, str]], workspace: dict[str, Any]) -> None:
+        """Open the located databases under their project ids, then restore the workspace tabs and layout."""
+        pending = {db_id for db_id, _p in located}
+        if not pending:
+            return
+
+        def one_done(db_id: str) -> None:
+            pending.discard(db_id)
+            if not pending:
+                self.restore_workspace(workspace)
+
+        for db_id, local in located:
+            if db_id in self.session:
+                pending.discard(db_id)
+                continue
+            self._open_one(local, db_id=db_id, done=lambda i=db_id: one_done(i))
+        if not pending:
+            self.restore_workspace(workspace)
+
+    def restore_workspace(self, workspace: dict[str, Any]) -> None:
+        opened_tabs = 0
+        for spec in workspace.get("tabs") or []:
+            kind = spec.get("kind")
+            try:
+                if kind == "table" and spec.get("db") in self.session:
+                    tab = self.open_table(spec["db"], spec["table"])
+                    if tab is not None:
+                        opened_tabs += 1
+                        if spec.get("filter"):
+                            tab.regex_btn.setChecked(bool(spec.get("regex")))
+                            tab.case_btn.setChecked(bool(spec.get("case")))
+                            tab.filter_edit.setText(spec["filter"])
+                        for name in spec.get("hidden") or []:
+                            c = tab.model.column_position(name)
+                            if c is not None:
+                                tab.user_hidden.add(c)
+                elif kind == "sql":
+                    self.show_sql(sql=spec.get("text", ""))
+                    opened_tabs += 1
+                elif kind == "timeline":
+                    self.show_timeline()
+                    opened_tabs += 1
+                elif kind == "mailbox" and spec.get("db") in self.session:
+                    self.show_mailboxes(spec["db"])
+                    opened_tabs += 1
+            except Exception as exc:  # a tab that cannot be restored must not stop the others
+                log.warning("Could not restore %s tab: %s", kind, exc)
+        layout = workspace.get("layout")
+        if layout:
+            try:
+                self.restoreState(QByteArray.fromBase64(QByteArray(layout.encode("ascii"))))
+            except Exception:
+                pass
+        current = workspace.get("current")
+        if isinstance(current, int) and 0 <= current < self.tabs.count():
+            self.tabs.setCurrentIndex(current)
+        self.statusBar().showMessage(
+            f"Project opened: {len(self.session)} database(s), {opened_tabs} tab(s) restored", 10000
+        )
 
     def _opened(self, result: tuple[list[EdbDatabase], dict[str, str]]) -> None:
         opened, errors = result
@@ -878,6 +1003,8 @@ class MainWindow(QMainWindow):
                     paths.append(str(p))
                 else:
                     paths.extend(str(x) for x in self.session.scan(p))
+            elif p.is_file() and p.suffix.lower() == ".edbproj":
+                self.import_project_dialog(str(p))
             elif p.is_file():
                 paths.append(str(p))
         if paths:

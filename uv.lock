@@ -987,13 +987,14 @@ wheels = [
 
 [[package]]
 name = "edb-explorer"
-version = "0.6.1"
+version = "0.7.0"
 source = { editable = "." }
 dependencies = [
     { name = "access-parser" },
     { name = "bson" },
     { name = "cramjam", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "cramjam", version = "2.12.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "cryptography" },
     { name = "dbfread" },
     { name = "dissect-database" },
     { name = "dissect-esedb" },
@@ -1039,6 +1040,7 @@ requires-dist = [
     { name = "bson", specifier = ">=0.5.10" },
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.2" },
     { name = "cramjam", specifier = ">=2.8" },
+    { name = "cryptography", specifier = ">=42" },
     { name = "dbfread", specifier = ">=2.0.7" },
     { name = "dissect-database", specifier = ">=1.1" },
     { name = "dissect-esedb", specifier = ">=3.15" },

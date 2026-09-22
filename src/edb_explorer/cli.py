@@ -799,6 +799,234 @@ def _status_tick(status: Any, message: str) -> bool:
     return True
 
 
+# --------------------------------------------------------------------------- #
+# Project files
+# --------------------------------------------------------------------------- #
+project_app = typer.Typer(
+    help="Project files (.edbproj): share a set of databases and the workspace with another machine - "
+    "SHA-256 hash map for integrity, optional AES-256-GCM encryption, Ed25519 signature.",
+    no_args_is_help=True,
+)
+app.add_typer(project_app, name="project")
+
+
+@project_app.command("export")
+def project_export(
+    output: Annotated[Path, typer.Argument(help="Project file to write (.edbproj is added).")],
+    files: Annotated[list[Path], typer.Argument(help="Database files to include.")],
+    name: Annotated[str, typer.Option("--name", help="Project name (default: file name).")] = "",
+    notes: Annotated[str, typer.Option("--notes", help="Free-text notes stored in the project.")] = "",
+    password: Annotated[
+        str | None, typer.Option("--password", "-p", help="Encrypt the manifest and embedded evidence.", prompt=False)
+    ] = None,
+    ask_password: Annotated[bool, typer.Option("--ask-password", help="Prompt for the password.")] = False,
+    embed: Annotated[bool, typer.Option("--embed", help="Copy the database files into the project.")] = False,
+    sign: Annotated[bool, typer.Option("--sign/--no-sign", help="Sign with your Ed25519 key.")] = True,
+    signer: Annotated[str, typer.Option("--signer", help="Name recorded with the signature.")] = "",
+) -> None:
+    """Bundle databases (and their SHA-256) into a project file."""
+    from edb_explorer.core.project import SigningIdentity, export_project
+
+    if ask_password:
+        password = typer.prompt("Password", hide_input=True, confirmation_prompt=True)
+    session = Session()
+    try:
+        opened, errors = session.open_many(files)
+        for path, err in errors.items():
+            err_console.print(f"[red]{path}: {err}")
+        if not opened:
+            raise typer.Exit(code=1)
+        identity = SigningIdentity.load_or_create(name=signer or None) if sign else None
+        with console.status("Exporting…") as status:
+            project = export_project(
+                opened,
+                output,
+                name=name,
+                notes=notes,
+                password=password,
+                embed=embed,
+                identity=identity,
+                progress=lambda m, _d, _t: _status_tick(status, m),
+            )
+        out = output if output.suffix.lower() == ".edbproj" else output.with_suffix(output.suffix + ".edbproj")
+        console.print(
+            f"Wrote {out} - {len(project.databases)} database(s), "
+            + ("encrypted, " if password else "")
+            + ("evidence embedded, " if embed else "")
+            + (f"signed by {identity.name} [{identity.fingerprint}]" if identity else "unsigned")
+        )
+    except EdbExplorerError as exc:
+        _fail(exc)
+    finally:
+        session.close_all()
+
+
+@project_app.command("info")
+def project_info(
+    path: Annotated[Path, typer.Argument(help="Project file.")],
+    password: Annotated[str | None, typer.Option("--password", "-p", help="Decrypt to list the databases.")] = None,
+    as_json: Annotated[bool, typer.Option("--json", help="Machine-readable output.")] = False,
+) -> None:
+    """Verify a project's integrity hash map and signature and list what it contains."""
+    from edb_explorer.core.project import TrustStore, inspect_project
+
+    try:
+        header = inspect_project(path, TrustStore())
+        project = header.project
+        if project is None and header.encrypted and password:
+            import zipfile
+
+            from edb_explorer.core.project import _open_manifest
+
+            with zipfile.ZipFile(path) as zf:
+                project, _key = _open_manifest(zf, header, password)
+    except EdbExplorerError as exc:
+        _fail(exc)
+        return
+    sig = header.signature
+    if as_json:
+        out: dict[str, Any] = {
+            "path": header.path,
+            "size": header.size,
+            "encrypted": header.encrypted,
+            "integrity_ok": header.integrity_ok,
+            "integrity_errors": header.integrity_errors,
+            "signature": {
+                "present": sig.present,
+                "valid": sig.valid,
+                "signer": sig.signer,
+                "fingerprint": sig.fingerprint,
+                "trusted": sig.trusted,
+            },
+            "members": header.members,
+        }
+        if project is not None:
+            out["project"] = project.to_dict()
+        console.print_json(json.dumps(out, default=str))
+        return
+    console.print(f"[bold]{header.path}[/] - {header.size:,} bytes, {len(header.members)} member(s)")
+    console.print(
+        "Integrity: " + ("[green]OK - every member matches the hash map" if header.integrity_ok else "[red]FAILED")
+    )
+    for e in header.integrity_errors:
+        console.print(f"  [red]{e}")
+    colour = "green" if sig.valid and sig.trusted else "yellow" if sig.valid else "red" if sig.present else "yellow"
+    console.print(
+        f"Signature: [{colour}]{sig.summary}[/]" + (f"  fingerprint {sig.fingerprint}" if sig.present else "")
+    )
+    console.print("Confidentiality: " + ("encrypted (AES-256-GCM, scrypt)" if header.encrypted else "not encrypted"))
+    if project is None:
+        console.print("[dim]Give --password to list the databases of an encrypted project.")
+        return
+    console.print(
+        f"Project: [bold]{project.name}[/]  created {project.created} by {project.author.get('user', '?')}@{project.author.get('host', '?')}  (EDB Explorer {project.app_version})"
+    )
+    if project.notes:
+        console.print(f"Notes: {project.notes}")
+    rt = RichTable(title=f"{len(project.databases)} database(s)")
+    for c in ("Id", "File", "Format", "Size", "SHA-256", "Embedded"):
+        rt.add_column(c)
+    for d in project.databases:
+        rt.add_row(
+            d.id, d.relative or d.name, d.kind_name or d.kind, f"{d.size:,}", d.sha256, "yes" if d.embedded else ""
+        )
+    console.print(rt)
+    tabs = project.workspace.get("tabs") or []
+    if tabs:
+        console.print(
+            f"Workspace: {len(tabs)} tab(s) - "
+            + ", ".join(f"{t.get('kind')}:{t.get('table') or t.get('db') or ''}" for t in tabs)
+        )
+
+
+@project_app.command("import")
+def project_import(
+    path: Annotated[Path, typer.Argument(help="Project file.")],
+    dest: Annotated[Path | None, typer.Option("--dest", "-d", help="Folder for embedded evidence files.")] = None,
+    search: Annotated[
+        list[Path] | None, typer.Option("--search", "-s", help="Folder(s) to look for the evidence in.")
+    ] = None,
+    password: Annotated[str | None, typer.Option("--password", "-p")] = None,
+    ask_password: Annotated[bool, typer.Option("--ask-password")] = False,
+    force: Annotated[bool, typer.Option("--force", help="Import even if the hash map or signature fails.")] = False,
+    open_gui: Annotated[bool, typer.Option("--gui", help="Open the located databases in the GUI afterwards.")] = False,
+) -> None:
+    """Verify, decrypt and unpack a project; locate its evidence files on this machine."""
+    from edb_explorer.core.project import TrustStore, import_project
+
+    if ask_password:
+        password = typer.prompt("Password", hide_input=True)
+    try:
+        with console.status("Importing…") as status:
+            res = import_project(
+                path,
+                password=password,
+                search_roots=search or [],
+                extract_to=dest,
+                trust=TrustStore(),
+                require_integrity=not force,
+                progress=lambda m, _d, _t: _status_tick(status, m),
+            )
+    except EdbExplorerError as exc:
+        _fail(exc)
+        return
+    sig = res.header.signature
+    console.print("Integrity: " + ("[green]OK" if res.header.integrity_ok else "[red]FAILED (forced)"))
+    console.print(f"Signature: {sig.summary}" + (f"  fingerprint {sig.fingerprint}" if sig.present else ""))
+    rt = RichTable(title=f"Project {res.project.name}: {len(res.project.databases)} database(s)")
+    for c in ("Id", "File", "Local path", "SHA-256 verified"):
+        rt.add_column(c)
+    missing = []
+    for d in res.project.databases:
+        local = res.evidence.get(d.id)
+        ok = res.verified.get(d.id)
+        rt.add_row(
+            d.id, d.relative or d.name, local or "[red]not found", "[green]yes" if ok else "[yellow]no" if local else ""
+        )
+        if not local:
+            missing.append(d)
+    console.print(rt)
+    if missing:
+        console.print(f"[yellow]{len(missing)} file(s) not found - copy them somewhere and pass --search <folder>.")
+    if open_gui:
+        paths = [p for p in res.evidence.values() if p]
+        if paths:
+            _launch_gui(paths, detach=True)
+
+
+@project_app.command("trust")
+def project_trust(
+    fingerprint: Annotated[str | None, typer.Argument(help="Signer fingerprint to trust (omit to list).")] = None,
+    name: Annotated[str, typer.Option("--name", help="Name to remember the signer by.")] = "",
+    forget: Annotated[bool, typer.Option("--forget", help="Remove the fingerprint instead.")] = False,
+) -> None:
+    """List, add or remove trusted project signers; without arguments also shows your own signing identity."""
+    from edb_explorer.core.project import SigningIdentity, TrustStore, config_dir
+
+    store = TrustStore()
+    if fingerprint:
+        if forget:
+            store.forget(fingerprint)
+            console.print(f"Forgot {fingerprint}")
+        else:
+            store.trust(fingerprint, name or fingerprint)
+            console.print(f"Trusting {fingerprint} as {name or fingerprint}")
+        return
+    me = SigningIdentity.load_or_create()
+    console.print(f"Your signing identity: [bold]{me.name}[/] on {me.host} - fingerprint [bold]{me.fingerprint}[/]")
+    console.print(f"[dim]Keys and trust store live in {config_dir()}")
+    entries = store.entries()
+    if not entries:
+        console.print("No trusted signers yet.")
+        return
+    rt = RichTable(title="Trusted signers")
+    for c in ("Fingerprint", "Name", "Added"):
+        rt.add_column(c)
+    for fp, e in entries.items():
+        rt.add_row(fp, e.get("name", ""), e.get("added", ""))
+    console.print(rt)
+
+
 def main() -> None:
     app()
 

@@ -455,3 +455,59 @@ def test_database_tree_groups_files_by_folder_and_pins_parents(app: QApplication
         assert model.item(0, 0).rowCount() == 1 and model.item(0, 2).text() == "1"
     finally:
         session.close_all()
+
+
+def test_main_window_export_and_reimport_project(
+    app: QApplication, fake_edb: Any, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Export the workspace from one window and open the project in a fresh one (ids, tabs, filter restored)."""
+    import time
+
+    from PySide6.QtCore import QSettings
+
+    import edb_explorer.gui.main_window as mw
+    from edb_explorer.core.project import export_project, import_project
+    from edb_explorer.gui.widgets.table_tab import TableTab
+
+    monkeypatch.setenv("EDB_EXPLORER_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setattr(mw, "QSettings", lambda *a, **k: QSettings(str(tmp_path / "s.ini"), QSettings.Format.IniFormat))
+
+    def pump(cond: Any, timeout: float = 30.0) -> None:
+        deadline = time.time() + timeout
+        while not cond() and time.time() < deadline:
+            app.processEvents()
+            time.sleep(0.005)
+        assert cond(), "timed out"
+
+    win = mw.MainWindow()
+    win.show()
+    win.open_files([str(fake_edb)])
+    pump(lambda: len(win.session) == 1)
+    db_id = next(iter(win.session)).id
+    tab = win.open_table(db_id, "SruDbIdMapTable")
+    assert tab is not None
+    pump(lambda: tab._finished)
+    tab.filter_edit.setText("chrome")
+    tab.apply_filter()
+    win.show_sql(sql="SELECT 1")
+    win.tabs.setCurrentIndex(0)
+    ws = win.capture_workspace()
+    assert [t["kind"] for t in ws["tabs"]] == ["table", "sql"] and ws["tabs"][0]["filter"] == "chrome"
+    assert ws["current"] == 0 and ws["layout"] and ws["theme"]
+    path = tmp_path / "ws.edbproj"
+    export_project(win.session.databases(), path, name="ws", workspace=ws)
+    win.close()
+    app.processEvents()
+
+    res = import_project(path)
+    assert res.evidence == {db_id: str(fake_edb)} and res.verified[db_id]
+    win2 = mw.MainWindow()
+    win2.show()
+    win2.open_project([(db_id, str(fake_edb))], res.project.workspace)
+    pump(lambda: len(win2.session) == 1 and win2.tabs.count() == 2)
+    tabs = [win2.tabs.widget(i) for i in range(win2.tabs.count())]
+    assert isinstance(tabs[0], TableTab) and tabs[0].db.id == db_id and tabs[0].table.name == "SruDbIdMapTable"
+    pump(lambda: tabs[0]._finished)
+    assert tabs[0].filter_edit.text() == "chrome" and win2._sql_tab is not None
+    assert win2._sql_tab.editor.toPlainText() == "SELECT 1" and win2.tabs.currentIndex() == 0
+    win2.close()
